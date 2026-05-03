@@ -812,6 +812,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "omega-claim-verifier"
+version = "0.11.0"
+dependencies = [
+ "criterion",
+ "omega-claim-prover",
+ "omega-claim-tx",
+ "omega-commitment-core",
+ "p3-air",
+ "p3-baby-bear",
+ "p3-blake3-air",
+ "p3-challenger",
+ "p3-commit",
+ "p3-dft",
+ "p3-field",
+ "p3-fri",
+ "p3-matrix",
+ "p3-merkle-tree",
+ "p3-monty-31",
+ "p3-poseidon2",
+ "p3-poseidon2-air",
+ "p3-symmetric",
+ "p3-uni-stark",
+ "postcard",
+ "rand 0.10.1",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "omega-commitment-bundle"
 version = "0.10.0-rc1"
 dependencies = [

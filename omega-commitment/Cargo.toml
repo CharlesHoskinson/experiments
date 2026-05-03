@@ -8,6 +8,7 @@ members = [
   "crates/omega-utxo-snapshot",
   "crates/omega-claim-tx",
   "crates/omega-claim-prover",
+  "crates/omega-claim-verifier",
 ]
 
 [workspace.package]

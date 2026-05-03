@@ -1,0 +1,38 @@
+[package]
+name = "omega-claim-verifier"
+version = "0.11.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omega-claim-prover = { path = "../omega-claim-prover" }
+omega-claim-tx = { path = "../omega-claim-tx" }
+
+p3-air.workspace = true
+p3-baby-bear.workspace = true
+p3-blake3-air.workspace = true
+p3-challenger.workspace = true
+p3-commit.workspace = true
+p3-dft.workspace = true
+p3-field.workspace = true
+p3-fri.workspace = true
+p3-matrix.workspace = true
+p3-merkle-tree.workspace = true
+p3-monty-31.workspace = true
+p3-poseidon2.workspace = true
+p3-poseidon2-air.workspace = true
+p3-symmetric.workspace = true
+p3-uni-stark.workspace = true
+postcard.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+omega-commitment-core = { path = "../omega-commitment-core" }
+
+[[bench]]
+name = "bench_verify_p50"
+harness = false

@@ -44,9 +44,13 @@ pub const MAX_V01_LEAF_PAYLOAD_LEN: usize = MAX_V01_LEAF_PREIMAGE_LEN
     - 1
     - core::mem::size_of::<u64>()
     - core::mem::size_of::<u64>();
+pub const PROOF_BINDING_WORD_OFFSET: usize = 2;
+pub const PROOF_BINDING_WORDS: usize = 8;
+pub const PROOF_PUBLIC_VALUE_COUNT: usize = PROOF_BINDING_WORD_OFFSET + PROOF_BINDING_WORDS;
 const PROOF_ENVELOPE_VERSION: u8 = 1;
 const SUB_TREE_COUNT: usize = 7;
 const ACC_MULTIPLIER: u16 = 257;
+const DOMAIN_PROOF_BINDING: &[u8] = b"omega:proof:v1:binding";
 
 const COL_SUB_TREE_ID: usize = 0;
 const COL_LEAF_INDEX_BE: usize = COL_SUB_TREE_ID + 1;
@@ -193,7 +197,7 @@ pub struct ProofEnvelope {
     pub public_inputs: Vec<ClaimPublicInputs>,
     #[serde(with = "hex::serde")]
     pub membership_transcript_digest: Hash,
-    pub public_values: [u32; 2],
+    pub public_values: [u32; PROOF_PUBLIC_VALUE_COUNT],
     pub stark_proof: Vec<u8>,
     pub blake3_compression_proof: Vec<u8>,
 }
@@ -213,7 +217,7 @@ impl<F> BaseAir<F> for OmegaMembershipAir {
     }
 
     fn num_public_values(&self) -> usize {
-        2
+        PROOF_PUBLIC_VALUE_COUNT
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
@@ -255,7 +259,12 @@ pub fn prove_collection(
     commitment.validate_bundle_root()?;
     let checked = validate_witnesses(commitment, witnesses)?;
     let transcript_digest = membership_transcript_digest(commitment, &checked);
-    let (trace, public_values) = build_trace(&checked);
+    let (trace, trace_public_values) = build_trace(&checked);
+    let public_inputs = witnesses
+        .iter()
+        .map(|w| w.public.clone())
+        .collect::<Vec<_>>();
+    let public_values = proof_public_values(commitment, &public_inputs, trace_public_values);
     let stark_config = make_stark_config(trace.height(), config);
     let proof = prove(
         &stark_config,
@@ -270,7 +279,7 @@ pub fn prove_collection(
         version: PROOF_ENVELOPE_VERSION,
         config: *config,
         commitment: commitment.clone(),
-        public_inputs: witnesses.iter().map(|w| w.public.clone()).collect(),
+        public_inputs,
         membership_transcript_digest: transcript_digest,
         public_values,
         stark_proof,
@@ -500,8 +509,61 @@ fn make_stark_config(trace_height: usize, config: &ProverConfig) -> OmegaStarkCo
     OmegaStarkConfig::new(pcs, challenger)
 }
 
-fn public_values_as_fields(values: [u32; 2]) -> [Val; 2] {
-    [Val::from_u32(values[0]), Val::from_u32(values[1])]
+fn public_values_as_fields(
+    values: [u32; PROOF_PUBLIC_VALUE_COUNT],
+) -> [Val; PROOF_PUBLIC_VALUE_COUNT] {
+    values.map(Val::from_u32)
+}
+
+fn proof_public_values(
+    commitment: &OmegaCommitment,
+    public_inputs: &[ClaimPublicInputs],
+    trace_public_values: [u32; PROOF_BINDING_WORD_OFFSET],
+) -> [u32; PROOF_PUBLIC_VALUE_COUNT] {
+    let binding_words = proof_binding_words(commitment, public_inputs);
+    let mut values = [0u32; PROOF_PUBLIC_VALUE_COUNT];
+    values[..PROOF_BINDING_WORD_OFFSET].copy_from_slice(&trace_public_values);
+    values[PROOF_BINDING_WORD_OFFSET..].copy_from_slice(&binding_words);
+    values
+}
+
+pub fn proof_binding_words(
+    commitment: &OmegaCommitment,
+    public_inputs: &[ClaimPublicInputs],
+) -> [u32; PROOF_BINDING_WORDS] {
+    let digest = proof_binding_digest(commitment, public_inputs);
+    let mut words = [0u32; PROOF_BINDING_WORDS];
+    for (word, chunk) in words.iter_mut().zip(digest.chunks_exact(4)) {
+        *word = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    }
+    words
+}
+
+fn proof_binding_digest(commitment: &OmegaCommitment, public_inputs: &[ClaimPublicInputs]) -> Hash {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(DOMAIN_PROOF_BINDING);
+    bytes.extend_from_slice(&commitment.bundle_root_blake3);
+    for root in &commitment.sub_tree_roots_blake3 {
+        bytes.extend_from_slice(root);
+    }
+    for count in commitment.item_counts {
+        bytes.extend_from_slice(&count.to_be_bytes());
+    }
+    for count in commitment.leaf_counts {
+        bytes.extend_from_slice(&count.to_be_bytes());
+    }
+    for depth in commitment.tree_depths {
+        bytes.extend_from_slice(&depth.to_be_bytes());
+    }
+    bytes.extend_from_slice(&(public_inputs.len() as u64).to_be_bytes());
+    for public in public_inputs {
+        bytes.push(public.sub_tree_id);
+        bytes.extend_from_slice(&public.leaf_index.to_be_bytes());
+        bytes.extend_from_slice(&public.bundle_root_blake3);
+        bytes.extend_from_slice(&public.nullifier);
+        bytes.extend_from_slice(&public.recipient_starstream_addr);
+    }
+    blake3_256(&bytes)
 }
 
 fn membership_transcript_digest(

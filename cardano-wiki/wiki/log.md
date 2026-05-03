@@ -389,6 +389,13 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 - Tests: `tests/prover_smoke.rs` builds a 256-leaf v1 UTxO tree, proves leaf 42, rejects a tampered sibling path, and rejects a 35-byte payload that creates a 65-byte v0.1 leaf preimage.
 - Verification before ticking tasks: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --no-fail-fast`, `openspec validate add-proof-experiment-harness --strict`, and `openspec validate add-goblin-agentic-framework --strict` all exited 0.
 
+## [2026-05-03] plan | proof-experiment harness batch 3 - omega-claim-verifier
+- Scope: OpenSpec `add-proof-experiment-harness` tasks 3.1-3.4. Task 3.5 stays open because `bench_verify_p50.rs` compiles but has not been measured or turned into a p50 assertion.
+- New crate: `omega-claim-verifier` with pure `verify(commitment, public_inputs, proof) -> Result<(), VerifyError>`. It uses no async, no I/O, and no global mutable state.
+- Binding fix: the prover now binds a Blake3 digest of `(commitment, public_inputs)` into the Plonky3 public values. The verifier recomputes those words before accepting the proof, so rewritten envelope inputs fail with `VerifyError::InvalidProof`.
+- Tests: `tests/verifier_roundtrip.rs` covers prove to verify success, tampered proof bytes, wrong commitment, public input mismatch, and rewritten envelope public inputs with matching call arguments.
+- Verification before ticking tasks: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --no-fail-fast`, `openspec validate add-proof-experiment-harness --strict`, and `openspec validate add-goblin-agentic-framework --strict` all exited 0.
+
 ## [2026-05-03] spec | LoganNet CLI experience v3.1 — proper lobster banner + goblin strip restored
 - Spec at docs/superpowers/specs/2026-05-03-loganet-cli-experience-design.md (v3.1)
 - v3 regression reverted: the heraldic-sigil banner was unrecognisable as a lobster; replaced with a 14-row × 60-col creature drawing with raised claws, framed Cardano + LGN emblems, eye stalks, segmented carapace, splayed tail fan

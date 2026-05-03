@@ -25,11 +25,13 @@ Implementation order. Each task is gated on the previous one passing `cargo test
 
 ## 3. omega-claim-verifier
 
-- [ ] 3.1 Create `crates/omega-claim-verifier/` with the same Plonky3 deps as the prover.
-- [ ] 3.2 Implement `verify(commitment, public_inputs, proof) -> Result<(), VerifyError>` using `p3_uni_stark::verify` with the same AIR.
-- [ ] 3.3 No tokio, no async, no I/O in the public surface.
-- [ ] 3.4 Add `tests/verifier_round_trip.rs`: prove → verify accepts; tampered proof byte → `Err(InvalidProof)`; wrong commitment → `Err(CommitmentMismatch)`.
+- [x] 3.1 Create `crates/omega-claim-verifier/` with the same Plonky3 deps as the prover.
+- [x] 3.2 Implement `verify(commitment, public_inputs, proof) -> Result<(), VerifyError>` using `p3_uni_stark::verify` with the same AIR.
+- [x] 3.3 No tokio, no async, no I/O in the public surface.
+- [x] 3.4 Add `tests/verifier_round_trip.rs`: prove → verify accepts; tampered proof byte → `Err(InvalidProof)`; wrong commitment → `Err(CommitmentMismatch)`.
+- Implementation note 2026-05-03: verifier task 3.4 also covers a proof-envelope binding regression where public inputs are rewritten to match call arguments while the Plonky3 proof is left unchanged; this now returns `Err(InvalidProof)` because `(commitment, public_inputs)` is bound into the proof public values.
 - [ ] 3.5 Add `bench_verify_p50.rs` measuring verify latency at 1, 16, 256 leaves; assert verify p50 < 500 ms on the developer laptop.
+- Implementation note 2026-05-03: `bench_verify_p50.rs` exists and compiles with `cargo bench -p omega-claim-verifier --bench bench_verify_p50 --no-run`; the task remains open until the benchmark is run and the p50 assertion is backed by local measurements.
 
 ## 4. omega-mock-ledger (SQLite + state machine)
 
