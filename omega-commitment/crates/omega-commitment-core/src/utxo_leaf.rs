@@ -77,9 +77,25 @@ impl Utxo {
         Ok(out)
     }
 
-    /// Compute the leaf hash: Blake2b-256 of canonical encoding.
+    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// canonical encoding.
+    ///
+    /// **Deprecated for production use.** New code should call
+    /// [`Utxo::commit_to_subtree`] and feed the resulting payload into
+    /// `MerkleTree::build_v1(SUB_TREE_ID_UTXO, payloads)`, which binds
+    /// the `(sub_tree_id, canonical_index)` pair into every leaf hash
+    /// per the v1 domain-separation spec. This method is retained only
+    /// for tests, CLIs, and witness paths that have not yet been
+    /// migrated to the v1 builder.
     pub fn leaf_hash(&self) -> Result<Hash, LeafError> {
         Ok(blake2b_256(&self.encode()?))
+    }
+
+    /// Return the canonical raw payload bytes that the v1 Merkle
+    /// builder consumes. The v1 builder calls `leaf_hash_v1` on this
+    /// payload; do NOT pre-hash here.
+    pub fn commit_to_subtree(&self) -> Result<Vec<u8>, LeafError> {
+        self.encode()
     }
 }
 

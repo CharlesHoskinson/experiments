@@ -3,6 +3,18 @@
 //! Reads seven sub-tree input JSON files from a directory, recomputes
 //! each sub-tree's `(blake2b_root, sha3_root)`, and aggregates into
 //! the canonical Ω-Commitment tuple `(blake2b_bundle_root, sha3_bundle_root)`.
+//!
+//! ## SHA3 bundle root: drift detection, not binding-agility hedge
+//!
+//! Both per-sub-tree roots are built from the same v1 Blake2b leaf
+//! hashes. The SHA3 root is therefore a drift-detection signal over
+//! the seven Blake2b roots — divergence between the two bundle roots
+//! means the aggregation step disagreed with itself, not that one of
+//! the underlying hash functions broke. A truly-independent SHA3 tree
+//! (separate per-leaf hashing under SHA3) is tracked as a v2.0
+//! follow-up; the audit reframing (A1/F004, 2026-05-03) makes the
+//! current SHA3 status explicit so consumers do not over-rely on it
+//! as a Blake2b-break hedge.
 
 use crate::recompute::recompute;
 use crate::sub_tree_id::ALL;
@@ -74,6 +86,14 @@ pub fn assemble(input_dir: &Path) -> anyhow::Result<BundleRecord> {
 /// Re-run assembly against `input_dir` and confirm the resulting roots
 /// match the published `bundle`. Returns `Ok(())` on match; an
 /// `anyhow::Error` describing the mismatch otherwise.
+///
+/// In addition to the root checks, this verifier explicitly asserts
+/// that the published `item_count` for every sub-tree matches the
+/// unpadded item count produced by recomputation. The `item_count`
+/// field bounds the maximum valid `canonical_index` in any v1
+/// inclusion proof: an inclusion witness whose claimed index is
+/// `>= item_count` MUST be rejected as a padding-leaf forgery
+/// (audit finding A1/F003, closed in Batch 1).
 pub fn verify(bundle: &BundleRecord, input_dir: &Path) -> anyhow::Result<()> {
     let fresh = assemble(input_dir)?;
     if fresh.blake2b_bundle_root != bundle.blake2b_bundle_root {
@@ -89,6 +109,26 @@ pub fn verify(bundle: &BundleRecord, input_dir: &Path) -> anyhow::Result<()> {
             hex::encode(bundle.sha3_bundle_root),
             hex::encode(fresh.sha3_bundle_root)
         );
+    }
+    // Explicit per-sub-tree item_count check: catches a published
+    // commitment whose leaf set has been padded but whose item_count
+    // was forged to admit a padding-leaf inclusion proof.
+    if fresh.sub_trees.len() != bundle.sub_trees.len() {
+        anyhow::bail!(
+            "sub_trees length mismatch: bundle has {}, recomputed {}",
+            bundle.sub_trees.len(),
+            fresh.sub_trees.len()
+        );
+    }
+    for (published, recomputed) in bundle.sub_trees.iter().zip(fresh.sub_trees.iter()) {
+        if published.item_count != recomputed.item_count {
+            anyhow::bail!(
+                "item_count mismatch for sub-tree {}: bundle says {}, recomputed {}",
+                published.sub_tree,
+                published.item_count,
+                recomputed.item_count
+            );
+        }
     }
     if fresh.sub_trees != bundle.sub_trees {
         anyhow::bail!("sub_trees array mismatch (per-sub-tree records differ)");

@@ -1,11 +1,13 @@
 //! Golden vector for the canonical Ω-Commitment bundle root tuple
 //! against the seven shipped synthetic fixtures.
 //!
-//! These two hashes are the canonical "synthetic-corpus" Ω-Commitment.
-//! Pinned at v0.7.0 smoke run and frozen here to catch any drift in:
+//! These two hashes are the canonical "synthetic-corpus" Ω-Commitment
+//! under the v1 domain-separated Merkle construction (Batch 1 of the
+//! 2026-05-03 audit-resolution plan). They lock down:
 //!   - per-sub-tree leaf encodings
-//!   - per-sub-tree root aggregation (Blake2b)
-//!   - the SHA3 root parallel computation
+//!   - per-sub-tree root aggregation (Blake2b, v1 domain tags)
+//!   - the SHA3 root parallel computation (drift-detection, NOT a
+//!     binding-agility hedge — see `bundle.rs` module docs)
 //!   - bundle root aggregation (Blake2b + SHA3 over concatenated roots)
 //!   - canonical sub-tree ordering
 //!
@@ -47,8 +49,9 @@ fn golden_bundle_blake2b_root() {
     let bundle = assemble(dir.path()).unwrap();
     assert_eq!(
         hex::encode(bundle.blake2b_bundle_root),
-        "ee308b538b26e6d87b115ffac5676f39d0059f75dd8c79221b6b80186aebd712",
-        "blake2b_bundle_root drifted from v0.7.0 pin"
+        // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
+        "cb9fce73c83de7281b6a0731951e0074a6f09d7131e91e46097486d8d0178f79",
+        "blake2b_bundle_root drifted from Batch 1 v1 pin"
     );
 }
 
@@ -59,8 +62,9 @@ fn golden_bundle_sha3_root() {
     let bundle = assemble(dir.path()).unwrap();
     assert_eq!(
         hex::encode(bundle.sha3_bundle_root),
-        "189826cfa4be57615db0ac4e5fab2602291921d54365198847927e5461638b77",
-        "sha3_bundle_root drifted from v0.7.0 pin"
+        // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
+        "f67959dc085f83a76d403cd27b89b67e1e210dbbf150682e9e9aafae45c3606c",
+        "sha3_bundle_root drifted from Batch 1 v1 pin"
     );
 }
 

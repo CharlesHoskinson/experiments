@@ -2,8 +2,14 @@
 //!
 //! The Ω-Commitment bundle aggregates the seven sub-tree roots in a
 //! fixed canonical order. `ALL` is the authoritative order used by
-//! both `assemble` and `verify`.
+//! both `assemble` and `verify`. Each `SubTreeId` also exposes its
+//! 1-byte v1 domain-separation tag via [`SubTreeId::numeric_id`],
+//! mirroring the constants in `omega_commitment_core::SUB_TREE_ID_*`.
 
+use omega_commitment_core::{
+    SUB_TREE_ID_GOVERNANCE, SUB_TREE_ID_HEADER, SUB_TREE_ID_SCRIPT, SUB_TREE_ID_STAKE,
+    SUB_TREE_ID_TOKEN_POLICY, SUB_TREE_ID_TX_INDEX, SUB_TREE_ID_UTXO,
+};
 use serde::Serialize;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -56,6 +62,23 @@ impl SubTreeId {
             SubTreeId::Governance => "governance",
         }
     }
+
+    /// 1-byte numeric tag bound into every v1 leaf hash via
+    /// `omega_commitment_core::tree::leaf_hash_v1`. Mirrors the
+    /// `SUB_TREE_ID_*` constants in the core crate; kept in lockstep
+    /// so the bundle layer never accidentally hashes a leaf under
+    /// the wrong sub-tree.
+    pub fn numeric_id(&self) -> u8 {
+        match self {
+            SubTreeId::Utxo => SUB_TREE_ID_UTXO,
+            SubTreeId::Header => SUB_TREE_ID_HEADER,
+            SubTreeId::TxIndex => SUB_TREE_ID_TX_INDEX,
+            SubTreeId::TokenPolicy => SUB_TREE_ID_TOKEN_POLICY,
+            SubTreeId::Script => SUB_TREE_ID_SCRIPT,
+            SubTreeId::Stake => SUB_TREE_ID_STAKE,
+            SubTreeId::Governance => SUB_TREE_ID_GOVERNANCE,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -94,5 +117,16 @@ mod tests {
         assert_eq!(SubTreeId::Script.filename(), "script.json");
         assert_eq!(SubTreeId::Stake.filename(), "stake.json");
         assert_eq!(SubTreeId::Governance.filename(), "governance.json");
+    }
+
+    #[test]
+    fn numeric_ids_are_unique_and_match_core_constants() {
+        let ids: Vec<u8> = ALL.iter().map(|s| s.numeric_id()).collect();
+        // Spot-check pairings.
+        assert_eq!(SubTreeId::Utxo.numeric_id(), SUB_TREE_ID_UTXO);
+        assert_eq!(SubTreeId::Governance.numeric_id(), SUB_TREE_ID_GOVERNANCE);
+        // All seven distinct.
+        let unique: std::collections::HashSet<u8> = ids.iter().copied().collect();
+        assert_eq!(unique.len(), 7);
     }
 }

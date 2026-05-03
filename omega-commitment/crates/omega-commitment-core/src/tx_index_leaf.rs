@@ -34,9 +34,18 @@ impl TxIndexEntry {
         out
     }
 
-    /// Compute the leaf hash: Blake2b-256 of canonical encoding.
+    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
+    /// canonical payload that the domain-separated Merkle builder
+    /// consumes.
     pub fn leaf_hash(&self) -> Hash {
         blake2b_256(&self.encode())
+    }
+
+    /// Return the canonical raw payload bytes for the v1 Merkle
+    /// builder.
+    pub fn commit_to_subtree(&self) -> Vec<u8> {
+        self.encode().to_vec()
     }
 }
 
