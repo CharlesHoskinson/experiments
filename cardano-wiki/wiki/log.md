@@ -4,6 +4,14 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 
 ---
 
+## [2026-05-03] spec | Omega archive-anchored-claims design — full architectural spec draft
+- Saved at docs/superpowers/specs/2026-05-03-omega-archive-anchored-claims-design.md (306 lines)
+- Synthesises 19 brainstorm + research + pressure-test agents (C1-C6 capability scan, P1-P5 privacy primitive lenses, A1-A6 adversarial attack classes, G1 governance trajectory) into one architectural spec
+- Top-line design properties: no backdoors, all primitives PQ, plonky3-friendly throughout, Crypsinous-PQ consensus (eprint 2018/1132 updated for PQ + privacy infrastructure), holder-sovereign disclosure, mass-MPC genesis ceremony, chain hosts verifier not data
+- Three-layer constitutional binding (guardrails script + circuit-level invariants + social fork pre-commitment) mechanically prevents future governance from introducing master keys, court overrides, escrow keys, or designated-viewer keys. "No consensus path can introduce a backdoor and still be called Omega."
+- 14 sections including comparison against current experiments/omega-commitment work — confirms shipped v0.9.1 is consistent with spec; deltas are additive (chunked anchoring, mass-MPC tooling, Lean reference impl, guardrails script) not corrective
+- 5 remaining open issues all placeholder-reducible: hash-based VRF construction (X-VRF broken FC 2024), lattice-vs-hash signature decision, PQ threshold-encryption committee, claim-window length, guardrails-script entrenchment depth
+
 ## [2026-05-01] init | cardano
 
 ## [2026-05-01] ingest | initial Cardano knowledge base

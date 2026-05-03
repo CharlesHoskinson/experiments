@@ -1,0 +1,306 @@
+# Ouroboros Omega — archive-anchored claims design
+
+> **Scope.** This document specifies the cryptographic architecture for migrating Cardano-era state into Omega via archive-anchored claims, and the privacy / consensus / governance machinery that surrounds them. It is the design-level companion to the v0.9.1 commitment tooling already shipped at `experiments/omega-commitment/` and to the v1.0 / v1.1 ingestion plans under `experiments/cardano-wiki/docs/superpowers/plans/`. Out of scope: smart-contract VM (T3), network stack (T4), storage layer (T5), wallet UX (T8).
+>
+> **Status.** Spec draft, 2026-05-03. Brainstormed across six capability lenses (cold storage, regulator attestations, programmable claims, pre-claim asset markets, cross-chain provenance, public-good archival), six privacy-primitive lenses (shielded pools, viewing-key disclosure, nullifier-only, aggregation/DP, GDPR/legal), six adversarial pressure-test lenses (crypto horizon, genesis ceremony, state-actor censorship, holder compromise, MEV, archive availability), and one consensus-layer reframing. All findings folded in.
+
+## Top-line design properties
+
+1. **No master keys, no court override, no escrow keys, no designated-viewer master.** No mechanism in the protocol grants disclosure of an address's data without the holder's voluntary cooperation. By symmetry, this means no jurisdiction can compel disclosure via the protocol; compliance happens at the application layer between consenting counterparties.
+2. **All primitives post-quantum.** No curve operations anywhere in build, verify, or leaf encoding. Hash functions: Blake2b-256 + SHA3-256 + Poseidon2 (in-circuit). Signatures: hash-based (SLH-DSA / SPHINCS+ family) for authority-grade ops; ML-DSA / FN-DSA permitted for high-throughput user signing per the Cloudflare 2025 analysis. Threshold: hash-based aggregation (leanXMSS / leanMultisig family); no BLS.
+3. **Plonky3-friendly throughout.** Every operation expressible as STARK constraints without curve gadgets. Inner Merkle hash = Poseidon2 in-circuit; Blake2b/SHA3 only at interop boundaries.
+4. **Crypsinous-PQ consensus.** Ouroboros Crypsinous (Kerber-Kiayias-Kohlweiss-Zikas, eprint 2018/1132) updated for the privacy infrastructure specified here. Shielded VRF, shielded stake, shielded rewards. Encrypted mempool natively (not bolted on).
+5. **Holder-sovereign disclosure.** PLUME-style nullifiers, holder-controlled viewing keys, holder-curated non-membership proofs against association sets the holder picks. The protocol has no association set.
+6. **Genesis = mass-MPC ceremony, not a publication event.** Cardano stake-weighted; soundness requires only one honest participant who re-derives from block 0.
+7. **The chain has the resolution machinery; holders bring their own proofs.** No mandated mirror network. Snapshot data lives wherever holders, communities, and economically-incentivised mirrors choose to host it. The protocol incentivises replication via storage-proof bounties without designating any operator.
+
+## 1. Cryptographic primitives
+
+| Layer | Primitive | Where |
+|---|---|---|
+| Per-leaf hash | Blake2b-256 with `omega:v1:leaf` domain tag binding `(sub_tree_id, canonical_index, payload_len, payload)` | Per-sub-tree leaf encoder, off-chain |
+| Internal-node hash | Blake2b-256 with `omega:v1:node` domain tag binding `(left, right)` | Per-sub-tree tree builder, off-chain |
+| Sub-tree root hash | Blake2b-256 over the final tree level | Off-chain at construction, baked into bundle pre-image |
+| Bundle root (primary) | Blake2b-256 over concatenation of seven sub-tree roots | Genesis commitment first 32 bytes |
+| Bundle root (drift-detection) | SHA3-256 over the same concatenation | Genesis commitment second 32 bytes |
+| Inner Merkle hash (in-circuit) | Poseidon2 | Plonky3 verifier circuit |
+| User signatures | ML-DSA-65 (FIPS 204) for ordinary tx; FN-DSA-512 (FIPS 206 IPD) optional once final | Per-claim authority, ongoing tx |
+| Authority-grade signatures | SLH-DSA-SHAKE-128s (FIPS 205) | Genesis ceremony attestations, governance |
+| VRF | Hash-based VRF inside STARK with a Praos-equivalent uniqueness reduction. **Open issue:** specific construction TBD; must not reduce to "no collisions in H." X-VRF (Buser et al.) ruled out per Bodaghi-Safavi-Naini FC 2024 break |
+| Threshold encryption | Hash-based, Penumbra-flow-style adapted for PQ. Per-epoch stake-weighted committee |
+| Nullifier construction | PLUME (ERC-7524) — `null = PLUME(sk, public_input_seed)` |
+
+## 2. The seven sub-trees
+
+| # | Sub-tree | Leaf binding | Source |
+|---|---|---|---|
+| 1 | UTXO | tx_id (32) ‖ output_index (u32 BE) ‖ address_bytes_len (u16 BE) ‖ address_bytes (raw CIP-19) ‖ value_lovelace (u64 BE) ‖ asset_count (u32 BE) ‖ assets ‖ datum_option_tag (u8) ‖ datum_payload ‖ script_ref_tag (u8) ‖ script_ref_payload | omega-utxo-snapshot LSQ output |
+| 2 | Header | slot (u64 BE) ‖ block_height (u64 BE) ‖ block_hash (32) ‖ prev_hash (32) | v1.1 chain-follower |
+| 3 | Tx-index | tx_id (32) ‖ slot (u64 BE) ‖ block_hash (32) ‖ tx_position (u32 BE) | v1.1 chain-follower |
+| 4 | Token policy | policy_id (28) ‖ policy_script_hash (28) ‖ total_minted (u64 BE) ‖ first_issuance_slot (u64 BE) | UTXO walk + chain-follower |
+| 5 | Script registry | script_hash (28) ‖ script_type_tag (u8) ‖ deployment_slot (u64 BE) | UTXO walk + chain-follower |
+| 6 | Stake | credential_tag (u8) ‖ credential (28) ‖ delegated_pool (28 or zero) ‖ drep_tag (u8) ‖ drep_payload (variable) ‖ controlled_stake (u64 BE) ‖ rewards_balance (u64 BE) | LedgerState JSON parse |
+| 7 | Governance | kind (u8) ‖ payload_hash (32) | LedgerState JSON parse |
+
+Lexicographic sort within each sub-tree by the natural identifier. Zero-pad to next power of two with `leaf_hash_v1(sub_tree_id, EMPTY_INDEX_SENTINEL=u64::MAX, &[])`. Verifier path enforces `item_count` to prevent padded-slot proofs.
+
+## 3. Genesis ceremony
+
+The 64-byte commitment `(blake2b_root, sha3_root)` is constituted by a mass multi-party-computation ceremony in the Zcash-Sapling / Ethereum-KZG tradition, scaled to Cardano's stake distribution.
+
+**Participants.** Any entity holding Cardano stake at the snapshot epoch may participate. Target ≥1,000 active participants drawn from SPOs, DReps, individual stakers, and academic / civil-society / exchange-custodian observers. No privileged signers, no foundation-curated list.
+
+**Per-participant work.**
+1. Independently re-derive the seven sub-tree roots and the bundle root tuple from raw Cardano immutable chain data starting at block 0 (NOT from a pre-built Mithril snapshot — see §3.1).
+2. Sign the resulting 64-byte tuple plus the snapshot block hash with their pre-fork Cardano stake key.
+3. Contribute entropy that is folded into Fiat-Shamir randomness for the per-claim verifier circuit's public parameters (defends against the Frozen Heart class of attacks).
+
+**Soundness.** Requires one honest participant. As long as any single SPO or staker independently re-derives from block 0 and the resulting commitment matches what the rest of the ceremony agreed on, the genesis is correct regardless of how many other participants were compromised. With ~3,000 SPOs alone, the assumption "at least one is honest and capable of running a Rust + Lean verifier from block 0" is operationally trivial.
+
+**Transcript.** Append-only, livestreamed, OpenTimestamp-anchored to Bitcoin within the same epoch. Final commitment + snapshot block hash + Mithril-cert-hash baked into Omega's genesis block.
+
+### 3.1 Snapshot supply-chain hardening
+
+The Mithril GHSA-qv97-5qr8-2266 advisory documents that Mithril's signed message excludes ledger-state files; only the immutable chain segment is multi-sig certified. Two consequences:
+
+1. **At least one ceremony participant MUST replay from Cardano block 0** using only the multi-sig-certified immutable segment. The Mithril ledger-state ancillary file (single-IOG-key signed) is treated as untrusted input, suitable for fast bootstrapping but never as an attestation source.
+2. **Cross-implementation reproducibility requires bit-exact agreement on intermediate per-tree roots**, not just the bundle root. At minimum two impls (Rust + Lean 4 extracted from formal spec); ideally three (add Haskell borrowing cardano-ledger's CDDL parsers as differential check).
+
+## 4. Claim mechanism
+
+A holder claims by submitting a transaction containing:
+- `public_input = (sub_tree_id, leaf_index, bundle_root, omega_recipient, chain_id="omega-mainnet", freshness_nonce)`
+- `witness = (leaf_preimage, merkle_path[≤24 levels], pq_signature_over_public_input, plume_nullifier_seed)`
+- `proof = plonky3_prove(verifier_circuit, public_input, witness)`
+
+### 4.1 Verifier circuit obligations (in-circuit constraints)
+
+1. Recompute leaf hash via `leaf_hash_v1(sub_tree_id, leaf_index, leaf_preimage)`.
+2. Walk Merkle path with `node_hash_v1(left, right)`, recomputing sub-tree root.
+3. Recompute bundle root from seven sub-tree roots, assert match against `bundle_root` public input.
+4. Verify `pq_signature` covers `public_input` exactly (recipient binding mandatory).
+5. Compute PLUME nullifier `null = PLUME(sk, sub_tree_id ‖ leaf_index)`; emit as public output.
+6. Assert `freshness_nonce ∈ valid_nonce_window` (defends against stale-mempool replay).
+
+### 4.2 On-chain post-verification
+
+1. Plonky3 `verify(circuit_id, public_input, proof)` — verifier circuit ID is a protocol parameter, rotatable by consensus.
+2. Nullifier check: assert `null ∉ consumed_nullifier_set`; insert on success.
+3. Apply state transition per claim type:
+   - `claim_utxo` → credit shielded note to `omega_recipient` under Crypsinous flow encryption
+   - `claim_token_policy` → grant Omega-side issuance rights gated by §4.3
+   - `claim_script` → register script per §4.3
+   - `claim_stake` → credit stake position; reputation NOT transferable
+   - `claim_governance` → see §4.3
+
+### 4.3 Per-claim-type assignment policy
+
+| Claim type | Forward-only assignment | Required additional witness |
+|---|---|---|
+| `claim_utxo` | Allowed | None beyond §4.1 |
+| `claim_token_policy` | Banned | Active-issuance attestation: minting events in last N Cardano epochs |
+| `claim_script` | Banned for primary; (a) dual signature from registered deployer key OR (b) governance-arbitrated dispute window with deposit-and-challenge | Plutus-script-locked UTxOs require dApp redeployment with claim-time alias commitment |
+| `claim_stake` | Forward-only allowed; reputation portability NOT a transferable credential | None |
+| `claim_governance` | Banned | DReps inactive at snapshot do NOT receive Omega governance rights without post-fork re-attestation + cooling-off period |
+| `claim_header` | Reserved (chain-anchored protocols only) | — |
+| `claim_tx` | Reserved (tx-anchored protocols only) | — |
+
+### 4.4 Pre-fork-key claim cutoff
+
+A finite claim window (recommended 5–10 years) followed by deterministic burn-and-reissue at cutoff. Defends against (a) quantum-acceleration breaking pre-fork Ed25519 before holders claim, and (b) the asymmetric-extraction window on uninformed holders. **No custodial escrow** — the unclaimed value is burned and re-minted to the protocol treasury, which funds the §6 archival bounty.
+
+## 5. Privacy architecture
+
+The protocol-default disclosure surface is asymmetric.
+
+### 5.1 Public surface (no holder consent required)
+- Universal-accumulator non-membership proofs against any list-commitment the verifier of a specific use case picks. Anyone can prove "address X is *not* in list L." The protocol has no list L of its own.
+- Differential-privacy-noised aggregate histograms (epoch-bucketed balance distributions, sub-tree-counts, etc.). Per-address queries are NOT a protocol-supported operation.
+- The 64-byte commitment itself plus the chunked Merkle-of-Merkles per §6.2.
+
+### 5.2 Holder-consent surface
+- PLUME-anonymous claim within the global archive cohort.
+- Bulletproofs+ range proofs of historical balance ("I held ≥ X at slot S"), holder-generated, holder-disclosed.
+- Sapling/MASP-style FVK + IVK + OVK split for post-claim shielded notes; viewing keys delegated to anyone the holder picks (accountant, exchange, lawyer, executor).
+- Selective-disclosure VC primitives (BBS+ / SD-JWT) for jurisdictional or counterparty-specific compliance flows.
+
+### 5.3 What is NOT in the protocol
+- No master view key.
+- No court-quorum decryption.
+- No regulator-jurisdiction TVK.
+- No protocol-curated association set / sanctioned set.
+- No threshold key held by the foundation, validators, or any quorum, that grants disclosure of holder data.
+
+The query channel is the doxxing surface (per A4 / A5 / P4 finding). Per-claim privacy is theatre absent query-pattern privacy. Mitigations: Crypsinous-native encrypted mempool (per §7), holder-side ORAM-style query interfaces for application-layer services, no protocol-mandated query oracle.
+
+## 6. Snapshot data: chain hosts the verifier, not the data
+
+### 6.1 What the chain holds
+- The 64-byte genesis commitment.
+- The Mithril cert hash anchoring the snapshot block.
+- The verifier circuit ID (rotatable parameter).
+- The consumed-nullifier set.
+- Each chunk-root from §6.2.
+- A content-addressed tarball of the CDDL spec + reference Rust + Haskell parser source, hashed into the genesis pre-image. Defends against year-50 encoding-format obsolescence.
+
+### 6.2 Chunked anchoring
+The snapshot is partitioned into N Merkle-chunks (~64 MiB each ≈ 3,400 chunks for 218 GB). Each chunk has a Merkle path back to the bundle root. The chain commits each chunk-root at protocol epoch boundaries.
+
+**Effect.** A holder needs only the chunk(s) containing their leaf, not the whole 218 GB. A storage-bounty hunter can earn rewards by proving they hold any specific chunk. Replication becomes economically tractable per-chunk rather than monolithic-or-nothing.
+
+### 6.3 Archival bounty
+A perpetual treasury allocation (Wikimedia-Endowment-shaped, ≈ $5M principal at 4% safe-withdrawal-rate funds ~$200K/year storage operations) funds storage-proof challenges paid in ADA/ωADA.
+
+**Mechanism.** Anyone may submit a chunk-availability proof to a periodically-rotating challenge protocol. The protocol pays a small ADA reward per honored proof, rate-limited and stake-bonded against false claims. **No designated operator.** Anyone proving they hold any chunk earns. Encourages geographic, jurisdictional, and infrastructural diversity.
+
+### 6.4 What the chain does NOT do
+- Does not host snapshot data.
+- Does not mandate a mirror operator.
+- Does not provide a query API for historical state (those are application-layer services run by anyone who wants to).
+- Does not fund any specific party — only the storage-proof challenge mechanism.
+
+## 7. Crypsinous-PQ consensus integration
+
+PQ-Crypsinous adapts eprint 2018/1132 to the privacy infrastructure above. Composition with the claim layer collapses three primitives I had as separate (consensus shielding, mempool encryption, claim privacy) into one coherent threshold-encryption layer.
+
+| Crypsinous original | PQ-Crypsinous |
+|---|---|
+| Groth16 over BLS12-381 | Plonky3 STARK; recursion only as compression layer with periodic non-recursive checkpoints |
+| Curve VRF (Praos analogue) | Hash-based VRF inside STARK (open construction issue per §1) |
+| BLS threshold for any aggregation | Hash-based threshold (leanXMSS / leanMultisig family) |
+| Pedersen commitments for shielded stake | Poseidon2 commitments inside STARK + threshold flow-encryption (Penumbra-style adapted PQ) |
+| Curve-based PRF for nullifiers | PLUME hash-based nullifier |
+| Sapling note encryption | Hybrid KEM (ML-KEM + AEAD) |
+
+**Encrypted mempool.** Threshold-encrypted to per-epoch stake-weighted committee. Validators commit to ordering before they can decrypt. Closes OFAC validator censorship + recipient front-running + mempool surveillance + validator reordering simultaneously.
+
+## 8. Validator-set diversity
+
+Liveness target: no single jurisdictional bloc exceeds 33% of stake; at least two non-cooperating blocs each hold >20%. Per-jurisdiction censorship sets are non-overlapping and cancel.
+
+**Pluggable transports** (Tor WebTunnel, Conjure, Snowflake) shipped by default in the canonical claim wallet so claimants can submit to any reachable validator. As long as one egress works, the claim is accepted by global consensus.
+
+**EDPB controllership defence.** Validators handle hashes only; leaf data is supplied by the holder, never stored on-chain or by validators. "Purpose and means" carve-out applies; ship a formal legal memo.
+
+## 9. Wallet + UX requirements
+
+Mandatory protocol-level requirements that wallets must satisfy:
+1. Reproducible builds + multi-party signed releases (m-of-n threshold across diverse vendors / auditors).
+2. Hardware-wallet-displayed claim payload — user verifies recipient + commitment on-device, not only in software.
+3. Public claim-payload format any independent tool can construct. Pluralism is the protection; no single wallet vendor on the load-bearing path.
+4. Out-of-band claim verification: GitHub releases + on-chain metadata + IPFS + signed mailing list.
+5. Canonical claim URL signed from a foundation PQ key, pinned in wallet UIs; certificate-transparency monitoring against typosquats.
+6. **Make seed-into-website impossible by design** — only signed claim payloads through hardware paths.
+
+## 10. PQ-key derivation
+
+BIP-39 → BIP-32 → BIP-85 → SLH-DSA / ML-DSA. Project Eleven pattern. Pinned on-chain to prevent silent BIP-85 spec drift; reference test vectors published as part of genesis spec; the derivation rule is encoded into the leaf itself so any rule change forces a new commitment.
+
+## 11. What the protocol explicitly does NOT prevent
+
+Honest acknowledgement, communicated in user-facing material:
+1. Stale-seed compromise during dormancy (silent loss).
+2. Wrench attacks (cryptography cannot resist physical force).
+3. Key-loss vs key-theft asymmetry (indistinguishable on-chain).
+4. Inheritance failures.
+
+Empirically: ~10–20% of holders will silently lose position over a decade-scale dormancy window, matching Bitcoin's 17–28% lost/stolen-silently rate. This is the cost of the no-backdoor stance, not a flaw of it.
+
+## 12. Comparison against current `experiments/omega-commitment/` work
+
+The v0.9.1 commitment-tooling shipped at `experiments/omega-commitment/` (post-audit, 292 tests passing) implements substantial portions of the design above. Status by spec section:
+
+| Spec section | Current implementation status | Required deltas to align |
+|---|---|---|
+| §1 cryptographic primitives — leaf-hash domain tags, dual-hash bundle | ✅ Shipped Batch 1 (`omega:v1:leaf` / `omega:v1:node`, dual-hash bundle root) | None |
+| §2 seven sub-trees with Cardano-faithful leaf shapes | ✅ Shipped Batch 2 (raw address bytes, datum_option, script_ref, tagged DRep enum, AccountState) | Header + tx-index sub-trees deferred to v1.1 chain-follower |
+| §3 mass-MPC genesis ceremony | ❌ Not implemented | Replaces single-snapshot-publication with ceremony tooling. New track. |
+| §3.1 cross-impl replay-from-block-0 | ⚠️ Partial — Rust impl exists; Lean impl planned but not started | New track for v2.0 reproducibility check |
+| §4 claim mechanism (Plonky3 verifier, PLUME nullifier, recipient binding) | ❌ Not implemented | Track T6 (verifier) — entire scope |
+| §4.3 per-claim-type assignment policy | ❌ Not implemented | Track T7 (bridge protocol) |
+| §4.4 pre-fork-key claim cutoff | ❌ Not designed | Track T7; protocol governance vote |
+| §5 privacy architecture | ❌ Not implemented | Tracks T6 + T7 |
+| §6.2 chunked anchoring | ❌ Not implemented | New v1.2 task — split snapshot into chunks, commit chunk-roots at epoch boundaries |
+| §6.3 archival bounty | ❌ Not designed | Track T12 economic policy |
+| §7 PQ-Crypsinous consensus | ❌ Not implemented | Track T2 (consensus) — entire scope, depends on Crypsinous-PQ research output |
+| §8 validator diversity | ❌ Not measurable until T2 ships | Track T11 / T12 operational policy |
+| §9 wallet requirements | ❌ Not implemented | Track T8 (tooling) — entire scope |
+| §10 PQ-key derivation pinning | ⚠️ Partial — BIP-85 derivation discussed but not pinned in genesis pre-image | Add to genesis ceremony scope §3 |
+| §11 honesty disclosures | ❌ Not in user-facing material | Track T9 (documentation) |
+
+**Implications for the v1.0 / v1.1 ingestion plans.** No changes required. The v1.0 plan ships the snapshot-construction tooling that feeds the §3 ceremony's input. The v1.1 plan ships the chain-follower that fills in the header + tx-index sub-trees per §2. Both are still on the critical path.
+
+**New plan slots needed.**
+1. **v1.2 chunked anchoring + embedded parser tarball.** Adds §6.2 + §6.1 final bullet to the genesis pre-image. Modest engineering (~few hundred LOC).
+2. **v2.0 mass-MPC ceremony tooling.** Implements §3 + §3.1. Borrow from Zcash Sapling / Ethereum KZG implementations.
+3. **v2.1 Lean 4 reference implementation.** Cross-impl differential check against the Rust implementation. Required ceremony input.
+
+**Deferred to other tracks.** Everything in §4–§11 (claim verifier, privacy primitives, Crypsinous, wallet requirements) is out of scope for T1 commitment-tooling and lives in T2 / T6 / T7 / T8 / T9 respectively. The T1 work is necessary and sufficient for genesis-side preparation; the holder-side and consensus-side work happens in parallel program tracks.
+
+## 13. Governance trajectory + constitutional binding
+
+Resolved from the G1 governance pressure-test. Omega inherits CIP-1694 / Voltaire-shape governance (DRep + Constitutional Committee + SPO veto), with three stacked mechanisms that bind future protocol upgrades against the introduction of any backdoor — even by supermajority.
+
+### 13.1 Three-layer constitutional binding
+
+**Layer 1 — guardrails script (CIP-1694 shape).** An on-chain Plutus script statically rejects any parameter-update proposal that:
+- Replaces or modifies the genesis commitment.
+- Introduces a master / recovery / escrow key field at the protocol level.
+- Introduces a designated-viewer / regulator-master key.
+- Introduces a court-decryption pathway.
+- Removes the PLUME nullifier requirement from the claim verifier.
+- Removes the recipient-binding-inside-the-SNARK requirement (§4.1 step 4).
+
+These are mechanically rejected before any vote tally; no DRep / CC / SPO supermajority can pass them. Updating the guardrails script itself is forbidden — only a chain replacement (i.e. a fork that the wallet ecosystem must explicitly opt into) can change it.
+
+**Layer 2 — circuit-level invariants.** The verifier circuit ID is a rotatable protocol parameter, but the *public-input shape* (PLUME nullifier required; recipient + chain-id + freshness-nonce bound; holder viewing-key sovereignty) is hashed into the genesis commitment's domain-separation pre-image. A backdoor-shaped circuit (for example one that accepts "regulator override" as a public input) cannot produce verifying proofs against the existing leaf format. Backdoor circuits are mechanically excluded from the proof system itself, not merely by governance vote.
+
+**Layer 3 — social fork pre-commitment.** Wallet vendors and the canonical claim-wallet implementation are explicitly committed (in their reproducible-build attestations) to follow the no-backdoor branch in any chain split. Steem → Hive (Feb 2020) is the operational precedent: when Justin Sun + exchange-custodied stake captured Steemit, the community forked to Hive and the captured chain became economically irrelevant. Same pattern applies if Omega is captured.
+
+**Honest tension.** Mutable governance and absolute no-backdoor cannot both be achieved at the consensus layer alone. A sufficiently determined supermajority can *replace the entire protocol*. What the three-layer stack buys is that doing so produces a chain that the existing wallet / exchange / holder ecosystem identifies as a *different chain*, not as Omega. The no-backdoor guarantee is enforced at the **identity-of-chain** level, not at the consensus level. **No consensus path can introduce a backdoor and still be called Omega.**
+
+### 13.2 Cross-fork claim conflict resolution
+
+A contentious fork at year N produces Omega-A and Omega-B, both referencing the same 64-byte genesis commitment. Both can verify the same Merkle membership proof. Without explicit replay protection, a holder could submit the same claim on both chains.
+
+**Mitigation.** Bind each fork's verifier circuit to a fork-discriminator: `H(chain_id ‖ fork_epoch)` is a public input to the claim verifier from genesis onward. Forks produce non-interchangeable proofs. This makes "double-claim across forks" mechanically impossible at the proof level. Each chain considers its own claim authoritative; cross-fork accounting is out of scope for the protocol — it is the irreducibly social layer (ETH / ETC precedent).
+
+### 13.3 Nullifier-set divergence at fork
+
+At fork, both chains inherit the pre-fork nullifier set; post-fork sets diverge. A holder who consumed a nullifier on Omega-A finds Omega-B's set never saw the spend. **Resolution.** Per §13.2, fork-discriminator binding means the holder must produce two distinct proofs (one per chain). Per-fork nullifier domains turn "double claim" into "two distinct claims on two distinct ledgers" — which matches economic reality.
+
+### 13.4 Verifier-circuit rotation without ceremony
+
+Plonky3 STARKs require no trusted setup. Verifier-circuit rotation is an on-chain governance action (CIP-1694 vote, gated by the §13.1 guardrails script), not a ceremony. This is the single most consequential simplification from the G1 findings: Omega never runs another mass MPC after genesis. The genesis MPC is once-only.
+
+### 13.5 Emergency-fix governance
+
+A critical PQ-Crypsinous bug discovered post-genesis cannot wait for a 70-day Tezos-style amendment cycle. The mechanism: SPO-quorum (≥80% of stake, sliding 30-block window) can pause block production for at most N epochs. The pause cannot mutate state; it only halts. Resume requires either timeout expiry or a Voltaire vote with the standard latency. **No single key, no foundation override, no pause guardian.**
+
+### 13.6 Validator-set capture defence
+
+Steemit precedent is explicit: ~$70M market cap in Feb 2020 made capture economically trivial. Cardano's ~$15B market cap puts 33% acquisition at ~$5B nominal / ~$15-25B real. Tezos has had no successful capture in seven years. The §13.1 guardrails script makes the prize hollow even if capture succeeds — an attacker holding 100% of stake still cannot add a backdoor parameter. They can only chain-replace, which the wallet ecosystem will reject.
+
+## 14. Open issues
+
+These remain unresolved and gate v2.0 publication readiness:
+
+1. **Hash-based VRF construction.** X-VRF (Buser et al.) was broken by Bodaghi-Safavi-Naini FC 2024. The Praos-equivalent uniqueness reduction must hold without reducing to "no collisions in H." Either pick a paper or commission one.
+2. **Lattice-vs-hash signature decision.** ML-DSA-65 / FN-DSA-512 for high-throughput user signing vs SLH-DSA-only for full no-curves-anywhere posture. Cloudflare 2025 analysis argues for the lattice option for ordinary tx; SLH-DSA reserved for genesis ceremony, governance, KES root.
+3. **Threshold-encryption committee composition under PQ.** Per-epoch stake-weighted committee is the obvious answer; the specific PQ threshold scheme (lattice-based vs hash-based) is undecided.
+4. **Claim-window length.** 5 vs 7 vs 10 vs 20 years. Trade-off: shorter = quantum-pre-fork-Ed25519 safety + extraction-window compression. Longer = vault-holder forgiveness. Empirical anchor: Mt Gox 10-year wait was operationally tolerable.
+5. **Guardrails-script entrenchment depth.** Whether the §13.1 guardrails script update path is forbidden entirely or requires a higher-than-supermajority quorum (e.g. 90% DRep + 90% SPO + unanimous CC). The latter preserves a theoretical escape hatch but creates a target. The former is cleaner but assumes any future need to update the guardrails will route through chain replacement.
+
+## Self-review
+
+**Coverage.** Every concern surfaced in C1-C6 (capability scan), P1-P5 (privacy primitives), A1-A6 (adversarial pressure test), and G1 (governance trajectory) maps to a specific section of the spec. The three design corrections from the user (no courts/escrow keys, no mirror network — chain has the resolution machinery, Crypsinous as consensus layer + mass-MPC for genesis) are integrated as §1 / §6 / §7 / §3.
+
+**No backdoors.** Every section verified against the no-master-key, no-court-override, no-escrow-key, no-designated-viewer constraint. Failed verification at zero sections. The §13.1 guardrails-script + circuit-level-invariant + social-fork-pre-commitment stack mechanically prevents future governance from introducing one.
+
+**Compatibility with current work.** §12 enumerates the alignment status. The shipped v0.9.1 implementation is consistent with the spec; deltas are additive (chunked anchoring, mass-MPC tooling, Lean reference impl, guardrails script), not corrective.
+
+**Honest gaps.** §14 lists the five remaining open issues. None are protocol-incompatible with the rest of the design; all are placeholder-reducible to specific paper / decision references.
+
+## Spec status
+
+This document is the design-level reference. Per the brainstorming skill protocol, the next step is owner review followed by writing-plans skill invocation to produce concrete implementation plans for the new track slots (v1.2, v2.0, v2.1, plus the guardrails-script work that lives under T7 bridge protocol). The existing v1.0 / v1.1 plans remain valid and on-track.
