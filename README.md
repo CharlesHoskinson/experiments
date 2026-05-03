@@ -186,6 +186,10 @@ What the verifier does not prove: that the Cardano-side history that produced th
 
 ## LoganNet — the local simulation ledger
 
+<p align="center">
+  <img src="./assets/loganet-logo.png" alt="LoganNet logo: a heraldic CryptoLobster with a deep blue-purple carapace and cyan circuit-glow, holding the Cardano three-circle logo aloft in its left claw and a glowing LGN coin in its right claw, painted on a warm parchment background" width="320">
+</p>
+
 LoganNet is the local 3-node Raft cluster a developer spins up on one box to round-trip a Plonky3 proof end-to-end. The unit of value carried by the resurrected Starstream UTxOs on this cluster is **LGN**. Neither has any relationship to real Cardano, real Omega mainnet, or real money. LGN is local, synthetic, and worthless on purpose. If anyone shows up offering to buy or sell LGN, walk away.
 
 The cluster runs three openraft (0.9.x) nodes on one machine. libp2p (0.55.x) listens on `127.0.0.1:{4001,4002,4003}` for Raft RPCs over TCP+Noise+Yamux+request_response. The `omega-api` HTTP surface listens on `127.0.0.1:{8001,8002,8003}` for client traffic. Each node owns one `rusqlite` database in WAL mode behind an mpsc-actor writer that serialises against openraft's state-machine apply path. Gossipsub is intentionally absent in v0.1; Raft `AppendEntries` is the authoritative broadcast layer. None of this is production-shaped — it is a developer-laptop quorum, with all the operational gotchas (mDNS LAN flooding salt, WAL truncate cron, snapshot-skew protection via channel ordering, restart-durability test) explicitly tracked.

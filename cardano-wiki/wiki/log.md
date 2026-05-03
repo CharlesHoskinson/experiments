@@ -375,3 +375,8 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 - CBOR shape: versioned envelope `[version, payload, blake3(payload)]`, with canonical inner payloads. The checksum lets the codec reject byte flips inside proof, witness, root, or nullifier byte strings before verifier code runs.
 - Tests: proptest round trips for both variants, deterministic tamper rejection, pre-encode rejection for collection arity mismatch, and a 1024-leaf collection size check under the 32 MiB task bound.
 - Verification before ticking tasks: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --no-fail-fast` all exited 0 from `omega-commitment/`.
+
+## [2026-05-03] docs | LoganNet logo (CryptoLobster) embedded in README
+- assets/loganet-logo.png added (CryptoLobster mascot, deep blue-purple carapace with cyan circuit-glow, holding the Cardano three-circle logo in left claw and an LGN coin in right claw, parchment background matching the goblins-hero illustration's visual identity)
+- Embedded centered at the top of the `## LoganNet` README section via a centered HTML <img> at width=320 (sized for the README without dominating the page)
+- Same visual set as assets/goblins-hero.png — same parchment + cyan-glow palette, same painterly fantasy register
