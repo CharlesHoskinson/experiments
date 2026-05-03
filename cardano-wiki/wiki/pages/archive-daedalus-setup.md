@@ -1,9 +1,22 @@
 # Daedalus 8.0.0 + Mithril Fast Bootstrap Setup Runbook
 
-Deprecated alternative: Omega v1.0 real-data work is currently using the
-headless `cardano-node` + `mithril-client` path in
-`scripts/setup_headless_node.md`. Keep this document for reference only unless
-the v1.0 source plan is explicitly moved back to Daedalus.
+> **ARCHIVED 2026-05-03.** Daedalus is not on the v1.0 ingestion path; the
+> canonical setup runbook is `omega-commitment/scripts/setup_headless_node.md`
+> (synced headless `cardano-node 10.7.1` + `mithril-client 2617.0`). This
+> page is preserved as historical reference for the original assumption (a
+> Daedalus-bundled cardano-node exposing a queryable socket on a workstation),
+> for the rationale of why the v1.0 architecture pivoted away from it, and
+> for any future operator who wants to reproduce the original setup verbatim.
+>
+> **The instructions below are NOT current.** In particular:
+> - The `cardano-cli query ledger-state ... --output-cbor` flag in step 6
+>   does not exist in cardano-cli 10.16 (supported `--output-*` flags are
+>   `json`, `text`, `yaml`); see the 2026-05-03 REVISION at the top of
+>   `cardano-wiki/docs/superpowers/plans/2026-05-01-omega-v1.0-real-mainnet-ingestion-plan.md`.
+> - The current `omega-ingest --format mainnet` consumer is not yet
+>   shipped (planned in v1.0 plan Tasks 4 + 9).
+> - The active runbook lives at `omega-commitment/scripts/setup_headless_node.md`;
+>   that file is what you want for any new install.
 
 This runbook gets a workstation from no local Cardano mainnet node to a synced
 node with a `cardano-cli` queryable socket, ready to dump Conway-era
@@ -14,9 +27,9 @@ updated and the output vectors are deliberately re-pinned. Newer Daedalus or
 cardano-node releases may be valid, but they are a different reproducibility
 baseline.
 
-For a server or non-GUI host, see `scripts/setup_headless_node.md`; it targets
-the same end-state using standalone `cardano-node`, `cardano-cli`, and
-`mithril-client`.
+For a server or non-GUI host, see `omega-commitment/scripts/setup_headless_node.md`;
+it targets the same end-state using standalone `cardano-node`, `cardano-cli`, and
+`mithril-client`, and is the canonical path as of 2026-05-03.
 
 ## Requirements
 

@@ -622,7 +622,7 @@ Adds the **`omega-commitment-ingest`** crate (4th workspace member) with binary 
 
 - **UTXO ingestion** — fully implemented end-to-end against a hand-crafted minimal CBOR fixture committed in-tree. Pipeline: CBOR -> `omega-ingest utxo` -> JSON -> `omega-commitment commit --sub-tree utxo` -> root.
 - **Golden vectors** — pinned per-sub-tree roots for all seven synthetic fixtures, plus the canonical Ω-Commitment bundle root tuple.
-- **Other 4 LedgerState-derivable sub-trees** (token-policy, script, stake, governance) — scaffolded with `unimplemented!()` and `#[ignore]`d test stubs. Real implementation requires Conway-era LedgerState parsing against `pallas` and is gated on the follow-up `omega-commitment-ingest-mainnet` plan.
+- **Other 4 LedgerState-derivable sub-trees** (token-policy, script, stake, governance) — synthetic-CBOR ingestion **shipped in v0.9.0** and patched in v0.9.1 (CLI output writers + asset-bundle preservation + strict CBOR end checks). The mainnet (real Conway LedgerState) variants are tracked separately by Tasks 4-8 of the v1.0 plan.
 - **Header + tx-index ingestion** — requires a chain-follower (multi-day operation, separate from LedgerState parsing). Out of scope for v0.8.0.
 
 ### Golden vectors
@@ -669,21 +669,21 @@ Once downloaded, point `omega-ingest` at it — but note that v0.8.0 only knows 
 | Bundle assembly + verification | Shipped (v0.7.0) |
 | Golden vector QA suite (synthetic + bundle) | Shipped (v0.8.0) |
 | UTXO ingestion from hand-crafted CBOR | Shipped (v0.8.0) |
-| Other 4 LedgerState-derivable sub-tree ingestion | Scaffolded — follow-up plan |
-| Header + tx-index ingestion (chain-follower) | Future plan |
-| Real Mithril snapshot end-to-end | Manual via download script |
+| Other 4 LedgerState-derivable sub-tree synthetic ingestion | Shipped (v0.9.0) |
+| Header + tx-index ingestion (chain-follower) | Planned (v1.1) |
+| Real Mithril snapshot end-to-end | v1.0 in progress (two-stream pipeline) |
 
 ### Sub-trees status (ingestion overlay v0.8.0)
 
 | # | Sub-tree | Status |
 |---|---|---|
 | 1 | UTXO set | Shipped (v0.1.0) + UTXO ingestion v0.8.0 |
-| 2 | Block header chain | Shipped (v0.2.0) — ingestion: future |
-| 3 | Transaction index | Shipped (v0.3.0) — ingestion: future |
-| 4 | Native token policies | Shipped (v0.4.0) — ingestion: scaffolded |
-| 5 | Script registry | Shipped (v0.5.0) — ingestion: scaffolded |
-| 6 | Stake state | Shipped (v0.6.0) — ingestion: scaffolded |
-| 7 | Governance state | Shipped (v0.6.0) — ingestion: scaffolded |
+| 2 | Block header chain | Shipped (v0.2.0) — ingestion: chain-follower (v1.1) |
+| 3 | Transaction index | Shipped (v0.3.0) — ingestion: chain-follower (v1.1) |
+| 4 | Native token policies | Shipped (v0.4.0) — synthetic ingestion shipped (v0.9.0) |
+| 5 | Script registry | Shipped (v0.5.0) — synthetic ingestion shipped (v0.9.0) |
+| 6 | Stake state | Shipped (v0.6.0) — synthetic ingestion shipped (v0.9.0) |
+| 7 | Governance state | Shipped (v0.6.0) — synthetic ingestion shipped (v0.9.0) |
 
 ## v0.9.0 — Four scaffolded ingestion paths implemented
 

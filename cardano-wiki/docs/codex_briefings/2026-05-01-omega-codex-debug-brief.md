@@ -18,7 +18,7 @@ This document is a **handoff brief** for OpenAI Codex (GPT-5.5+) to perform a lo
 **Repo:** `/home/hoskinson/omega-commitment` (git repo; 89 commits as of v0.9.1; ~10,000 lines of Rust). Standalone, not a fork.
 
 **What this code IS:**
-- A four-crate Rust workspace producing per-sub-tree commitments (UTXO, header, tx-index, token-policy, script, stake, governance) and a dual-track bundle root (Blake2b + SHA3) per the resolved 2026-05-01 dual-hash decision.
+- A four-crate Rust workspace producing per-sub-tree commitments (UTXO, header, tx-index, token-policy, script, stake, governance) and a dual-track bundle root (Blake2b + SHA3) per the resolved 2026-05-01 dual-hash decision. **[SUPERSEDED 2026-05-03: workspace now has 5 crates including omega-utxo-snapshot]**
 - Synthetic-CBOR ingestion paths for 5 of 7 sub-trees (the LedgerState-derivable ones).
 - 248 passing tests, including pinned golden vectors at three layers.
 - Clippy + rustfmt clean; CI workflow committed.
@@ -118,7 +118,7 @@ These 18 hashes are your regression net. Any change that causes any of them to d
 
 ```
 omega-commitment/
-├── Cargo.toml                           Workspace manifest (4 members)
+├── Cargo.toml                           Workspace manifest (4 members)  [SUPERSEDED 2026-05-03: 5 members — omega-utxo-snapshot added]
 ├── README.md                            Per-version release notes
 ├── rust-toolchain.toml                  Pin: stable + clippy + rustfmt
 ├── .cargo/config.toml                   Aliases: cargo lint, cargo fmt-check
@@ -186,7 +186,7 @@ A real Mithril mainnet snapshot is a multi-GB Cardano node DB (immutable + ledge
 
 ### Why the workspace synchronizes versions
 
-All four crates bump together (workspace-synchronized). One workspace, one version. Avoids dependency-version juggling and makes "which version is installed" easy to answer.
+All four crates bump together (workspace-synchronized). One workspace, one version. Avoids dependency-version juggling and makes "which version is installed" easy to answer. **[SUPERSEDED 2026-05-03: now five crates bump together, including the new omega-utxo-snapshot crate.]**
 
 ### Why `#[non_exhaustive]` on `LeafError` and `SubTree`
 
@@ -248,7 +248,7 @@ These are load-bearing and changing them breaks downstream consumers:
 2. **Per-sub-tree leaf encoding byte layouts** (e.g., UTXO is `tx_id ‖ output_index BE ‖ address_hash ‖ value_lovelace BE ‖ asset_count BE ‖ assets ‖ datum_marker`). Documented in each `*_leaf.rs` module docstring. Changing layout = SemVer-major.
 3. **`SubTreeId::ALL` canonical order** in `omega-commitment-bundle`. Changing order changes the bundle root.
 4. **`hash::Hash = [u8; 32]` type alias.** Used uniformly across the workspace.
-5. **`Cargo.toml` workspace structure.** All four crates bump together.
+5. **`Cargo.toml` workspace structure.** All four crates bump together. **[SUPERSEDED 2026-05-03: five crates bump together — omega-utxo-snapshot included.]**
 6. **The dual-hash decision (selective dual-track at bundle layer only).** Changing this is a program-level decision requiring a new decision document.
 7. **`#[non_exhaustive]` on `LeafError` and `SubTree`.** Removing these breaks SemVer guarantees.
 8. **CI configuration.** `cargo lint = clippy --workspace --all-targets -- -D warnings` is the standard. Don't loosen.

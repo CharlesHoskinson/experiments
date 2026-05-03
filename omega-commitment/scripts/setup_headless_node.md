@@ -171,8 +171,32 @@ This bypasses `cardano-cli ... query utxo --whole-utxo` (documented as
 `IntersectMBO/cardano-cli#1350` carries the hotfix but is unmerged).
 Pallas's CBOR decoder doesn't share that asymmetry; the output is
 bit-identical to what a fixed cardano-cli would write with
-`--output-cbor-bin`. `omega-ingest utxo --format mainnet` consumes this
-file unchanged.
+`--output-cbor-bin`.
+
+**Memory + streaming caveat (audit 2026-05-03, finding A6/F002).**
+`omega-utxo-snapshot` buffers the entire `BlockQuery::GetUTxOWhole`
+response in memory as a single `pallas_codec::utils::AnyCbor`
+(effectively a `Vec<u8>`) before writing to disk. Resident set size
+grows linearly during the query and peaks at the full encoded UTxO set
+(multi-GB on mainnet — observed ~3-5 GB at epoch 628). The release
+finishes the LSQ session AFTER the buffer is flushed to disk; on a
+constrained box, the disk write itself will not start until the entire
+response has been received. A streaming alternative would require
+dropping into the lower-level pallas multiplexer and re-implementing
+the LSQ framing by hand. The v1.0 box (122 GiB RAM) makes this a
+non-issue in production; if you run this on smaller hardware, watch
+RSS and free disk simultaneously, and budget for a streaming rewrite
+before you push the host into swap.
+
+**`omega-ingest utxo --format mainnet` is the planned consumer
+implemented in Task 4 of the v1.0 plan
+(`docs/superpowers/plans/2026-05-01-omega-v1.0-real-mainnet-ingestion-plan.md`)
+and is NOT YET shipped.** As of 2026-05-03 the `omega-ingest` CLI only
+accepts the v0.9.x synthetic CBOR fixtures; the `--format` flag and
+the mainnet parser path are scaffolded by Task 9 and the per-sub-tree
+parsers (Tasks 4-8) respectively. The `utxo_*.cbor` file produced
+above is the canonical input for that work but cannot be parsed by
+`omega-ingest` until those tasks land.
 
 ## 8. Stopping
 

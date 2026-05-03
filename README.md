@@ -4,7 +4,7 @@ Working space for in-progress research and prototypes. Two pieces here belong to
 
 | Subdirectory | What it is | Status |
 |---|---|---|
-| [`omega-commitment/`](./omega-commitment/) | Rust workspace producing the Ω-Commitment, a single hash that captures the entire pre-fork Cardano state across 7 sub-trees | v0.9.1 (89 commits, 248 tests) |
+| [`omega-commitment/`](./omega-commitment/) | Rust workspace producing the Ω-Commitment, a single hash that captures the entire pre-fork Cardano state across 7 sub-trees | v0.9.1 + Batch 1/2 audit fixes (282 tests) |
 | [`cardano-wiki/`](./cardano-wiki/) | LLM-maintained research wiki: Cardano consensus, EUTXO, Plutus, Hydra, Mithril, Leios, Voltaire governance, plus the Omega program design and the v1.0 ingestion plans | Living document |
 
 ## What is Ouroboros Omega?
@@ -21,7 +21,7 @@ That is the program in one paragraph. The work in this repository is the smalles
 
 ## How to read this repo
 
-Both subdirectories are self-contained. To run code, go to `omega-commitment/`, run `cargo test --workspace`, and read the per-crate READMEs. The workspace has five member crates (`omega-commitment-core` library, `omega-commitment-bundle` and `omega-commitment-ingest` library+binary pairs, plus standalone `omega-commitment-cli` and `omega-utxo-snapshot` binaries) and a tests tree with three layers of golden vectors that catch the regression categories that have broken in past versions. Test count is 248 as of v0.9.1, all green.
+Both subdirectories are self-contained. To run code, go to `omega-commitment/`, run `cargo test --workspace`, and read the per-crate READMEs. The workspace has five member crates (`omega-commitment-core` library, `omega-commitment-bundle` and `omega-commitment-ingest` library+binary pairs, plus standalone `omega-commitment-cli` and `omega-utxo-snapshot` binaries) and a tests tree with three layers of golden vectors that catch the regression categories that have broken in past versions. Test count is 282 as of the post-Batch-2 audit-fix landing on top of v0.9.1, all green.
 
 For design rationale, go to `cardano-wiki/`. The wiki is flat by design: every page lives in `wiki/pages/`, slugged by topic, indexed in `wiki/index.md`. The single most important page is [`wiki/pages/spec-ouroboros-omega.md`](./cardano-wiki/wiki/pages/spec-ouroboros-omega.md). The two most recent pages, written 2026-05-03, document the v1.0 ingestion pipeline and are the right place to start if you want to understand what the code is being wired up to do against real mainnet.
 
@@ -37,9 +37,9 @@ The Claude Code skill bundle for working on this repo (about a hundred skills co
 
 | Layer | State |
 |---|---|
-| Synthetic-fixture ingestion (5 of 7 sub-trees) | Shipped v0.9.1 |
+| Synthetic-fixture ingestion (5 of 7 sub-trees) | Shipped v0.9.1; 282 workspace tests green after Batch 1 + Batch 2 audit fixes |
 | Headless mainnet cardano-node (Mithril-bootstrapped) | Synced epoch 628, slot 186,209,073 |
-| `omega-utxo-snapshot` LSQ client (UTxO sub-tree input) | Built; smoke-test against live mainnet in flight |
+| `omega-utxo-snapshot` LSQ client (UTxO sub-tree input) | Shipped 2026-05-03; smoke-test against live mainnet healthy |
 | Real-mainnet ingestion (5 sub-trees) | v1.0 in progress, parser implementation next |
 | Chain-follower for header + tx-index sub-trees | v1.1 planned |
 
@@ -69,19 +69,20 @@ The Ω-Commitment is one half of a two-part construction. This repository builds
         │       (stake-based threshold sig over snapshot bytes)
         │
         ▼
-  ┌─────────────────────┐         ┌──────────────────────────┐
-  │ omega-utxo-snapshot │         │ cardano-cli              │
-  │ (pallas-network LSQ)│         │ conway query ledger-state│
-  │  BlockQuery::       │         │  --output-json           │
-  │  GetUTxOWhole       │         │                          │
-  └──────────┬──────────┘         └────────────┬─────────────┘
-             │                                 │
-             ▼                                 ▼
-       utxo_*.cbor                    ledger_state_*.json
-       (~ multi-GB)                   (~ 2 GiB)
-             │                                 │
-             └────────────────┬────────────────┘
-                              ▼
+  ┌─────────────────────┐   ┌──────────────────────────┐   ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐
+  │ omega-utxo-snapshot │   │ cardano-cli              │     v1.1 chain-follower (planned)
+  │ (pallas-network LSQ)│   │ conway query ledger-state│   │ pallas-network N2C chain-sync│
+  │  BlockQuery::       │   │  --output-json           │     walking ~/cardano/db/db/
+  │  GetUTxOWhole       │   │                          │   │ immutable/ from genesis      │
+  └──────────┬──────────┘   └────────────┬─────────────┘   └ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ┘
+             │                           │                                 ┊
+             ▼                           ▼                                 ▼
+       utxo_*.cbor              ledger_state_*.json              header_*.ndjson
+       (~ multi-GB)             (~ 2 GiB)                        tx_index_*.ndjson
+                                                                 (NDJSON streams, planned)
+             │                           │                                 ┊
+             ├───────────────────────────┴─────────────────────────────────┘
+             ▼
                   ┌───────────────────────┐
                   │  omega-ingest         │
                   │  (per-sub-tree        │
@@ -91,9 +92,11 @@ The Ω-Commitment is one half of a two-part construction. This repository builds
                              ▼
        ┌───────┬────────┬────────┬────────┬────────┬────────┬────────┐
        │ UTXO  │ Header │ Tx-idx │ Token  │ Script │ Stake  │ Gov    │
-       │ leaves│ leaves │ leaves │ leaves │ leaves │ leaves │ leaves │
+       │ leaves│  *v1.1*│  *v1.1*│ leaves │ leaves │ leaves │ leaves │
        │ leaf_hash_v1(sub_tree_id, canonical_index, payload),        │
        │ sorted, padded with the omega:v1:leaf empty-leaf sentinel   │
+       │ Header + Tx-idx are placeholder sub-trees in v1.0; the      │
+       │ v1.1 chain-follower lane (dotted, above) supplies them.     │
        └───┬───┴───┬────┴───┬────┴───┬────┴───┬────┴───┬────┴───┬────┘
            ▼       ▼        ▼        ▼        ▼        ▼        ▼
         utxo    header   tx-idx   token   script   stake     gov
@@ -251,10 +254,6 @@ Gated, manual, multi-gigabyte. Reads both the LedgerState JSON and the UTxO CBOR
 #### Task 12 — Real-data golden vector capture
 
 After Task 11 passes, run it once at a chosen mainnet epoch boundary and pin the resulting per-sub-tree roots and bundle root tuple as the v1.0 golden vector. Document the snapshot height, the input file hashes, and the timing in `docs/golden_vectors/mainnet_v1.0_epoch_<N>.md`. This is the "5 real + 2 placeholder" intermediate result; v1.1 replaces the placeholders.
-
-#### Task 13 — Reframe (or drop) the pallas-vs-Koios decision matrix doc
-
-The original v1.0 plan included a task to write a doc comparing pallas-traverse against Koios REST as the mainnet ingestion strategy. The 2026-05-03 architecture revision made the question moot: pallas is the in-tree producer for one stream, the JSON cli is the producer for the other, and Koios is no longer in the picture. Task 13 either updates this task to describe the actual decision tree (when pallas wins, when JSON wins, when chain-replay wins) or deletes it as obsolete.
 
 #### Task 14 — Bump workspace to v1.0.0 + extend README
 
