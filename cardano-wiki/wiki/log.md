@@ -360,3 +360,11 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 - Codex GPT-5.5 xhigh handoff brief at cardano-wiki/docs/codex_briefings/2026-05-03-codex-handoff-proof-harness-and-goblins.md. Defines toolchain pins, build/test loop, acceptance gates, may-defer / may-NOT-defer lists, and links to QA review.
 - Cardano eUTXO modularity verified: pallas-validate (1.0.0-alpha.6) is the right pick for the harness's optional Cardano-tx-validation feature (modular, stable Rust, per-era phase1 + phase2 behind Cargo feature). amaru-ledger considered but rejected for v0.1 (nightly Rust, heavier dep tree).
 - Plonky3 + Starstream upstream-direct ZK proof generation reconfirmed (3.4s prove, 204ms verify, 4.9 MiB STARK proof; Starstream Nightstream-fold proof in 92s for 6-step coroutine trace at 1174 R1CS constraints).
+
+## [2026-05-03] docs | README expansion — LoganNet + Goblins sections, hero image embedded
+- Two new top-level README sections: `## LoganNet — the local simulation ledger` and `## Goblins — the agentic load mix`. Inserted after "What the Plonky3 verifier proves", before "How to read this repo". Existing four-layer architecture, C1-C8 verifier table, transaction-flow phases, Tracks T1-T12, To-do, License all unchanged.
+- LoganNet definition: local 3-node Raft cluster on one developer box. LGN is the unit of value flowing on Starstream UTxOs after a claim applies. **Explicit non-monetary disclaimer in the README.** Topology diagram (3 nodes, libp2p :4001-4003, omega-api :8001-8003, rusqlite per node).
+- Goblins section embeds `assets/goblins-hero.png` (six-role hero illustration, 2.8 MB, parchment + cyan-glow palette). 6-row role table: Holder, Whale, Adversary, Lurker, SnapshotServer, Validator with one-line behaviour + failure mode each. Cultural-notes paragraph: Adversary panics on accepted, Validator runs outside cluster, Lurker writes LLM summaries.
+- Status table gains two rows tracking the OpenSpec changes (`add-proof-experiment-harness`, `add-goblin-agentic-framework`).
+- Design spec at `cardano-wiki/docs/superpowers/specs/2026-05-03-loganet-goblins-readme-expansion-design.md`.
+- README size: 483 → 572 lines (+89). humanizer scan clean.

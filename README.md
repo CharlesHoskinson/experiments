@@ -184,6 +184,93 @@ Multi-sub-tree claims (claim_utxo + claim_stake + claim_governance for the same 
 
 What the verifier does not prove: that the Cardano-side history that produced the leaf was internally consistent (Cardano's own validation handled that), that the snapshot was honestly chosen (Mithril + cross-implementation reproducibility handle that), or that the holder's Cardano-side wallet was uncompromised (out of scope; on-Omega state is final regardless of off-chain disputes).
 
+## LoganNet — the local simulation ledger
+
+LoganNet is the local 3-node Raft cluster a developer spins up on one box to round-trip a Plonky3 proof end-to-end. The unit of value carried by the resurrected Starstream UTxOs on this cluster is **LGN**. Neither has any relationship to real Cardano, real Omega mainnet, or real money. LGN is local, synthetic, and worthless on purpose. If anyone shows up offering to buy or sell LGN, walk away.
+
+The cluster runs three openraft (0.9.x) nodes on one machine. libp2p (0.55.x) listens on `127.0.0.1:{4001,4002,4003}` for Raft RPCs over TCP+Noise+Yamux+request_response. The `omega-api` HTTP surface listens on `127.0.0.1:{8001,8002,8003}` for client traffic. Each node owns one `rusqlite` database in WAL mode behind an mpsc-actor writer that serialises against openraft's state-machine apply path. Gossipsub is intentionally absent in v0.1; Raft `AppendEntries` is the authoritative broadcast layer. None of this is production-shaped — it is a developer-laptop quorum, with all the operational gotchas (mDNS LAN flooding salt, WAL truncate cron, snapshot-skew protection via channel ordering, restart-durability test) explicitly tracked.
+
+Genesis is a synthetic Ω-Commitment pinned at startup as a JSON file. The bundle root is built via `omega-commitment-core::Tree::build_v1` over a small synthetic UTxO sub-tree; Blake3 hashing and `omega:v2:{leaf,node}` domain tags everywhere. When a `claim_utxo` applies, the verifier emits a Starstream UTxO with a `value` field — that's the LGN balance flowing on LoganNet. v0.1 caps leaf preimages at 64 bytes (one Blake3 compression block) so the soundness boundary is clean without a chunk/finalize gluing AIR; v0.2 adds the `LeafPreimageAir` for variable-length leaves.
+
+```
+                              ┌────────────────────────┐
+                              │  omega-experiment CLI  │
+                              │   prove / submit /     │
+                              │   state / bench        │
+                              └───────────┬────────────┘
+                                          │  HTTP /v1/...
+                  ┌───────────────────────┼───────────────────────┐
+                  │                       │                       │
+                  ▼                       ▼                       ▼
+          ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+          │  Node 1      │        │  Node 2      │        │  Node 3      │
+          │              │        │              │        │              │
+          │ libp2p :4001 │◄──────►│ libp2p :4002 │◄──────►│ libp2p :4003 │
+          │ omega-api    │        │ omega-api    │        │ omega-api    │
+          │   :8001      │        │   :8002      │        │   :8003      │
+          │              │        │              │        │              │
+          │ openraft 0.9 │        │ openraft 0.9 │        │ openraft 0.9 │
+          │     │        │        │     │        │        │     │        │
+          │     ▼        │        │     ▼        │        │     ▼        │
+          │ rusqlite WAL │        │ rusqlite WAL │        │ rusqlite WAL │
+          │ node1.db     │        │ node2.db     │        │ node3.db     │
+          └──────────────┘        └──────────────┘        └──────────────┘
+                                          │
+                              ┌───────────┴───────────┐
+                              │ synthetic genesis     │
+                              │   bundle.json         │
+                              │   (Ω-Commitment       │
+                              │    + sub-tree roots   │
+                              │    + item_counts)     │
+                              └───────────────────────┘
+```
+
+To run a proof experiment end-to-end:
+
+```bash
+cargo build --workspace
+omega-experiment genesis --out var/bundle.json --leaves 256
+omega-toy-consensus run --node 1 --genesis var/bundle.json &
+omega-toy-consensus run --node 2 --genesis var/bundle.json &
+omega-toy-consensus run --node 3 --genesis var/bundle.json &
+omega-experiment prove --commit var/bundle.json --leaf-index 42 --out var/proof.bin
+omega-experiment submit --node http://127.0.0.1:8001 --proof var/proof.bin
+omega-experiment state  --node http://127.0.0.1:8001
+```
+
+The full design is in [`openspec/changes/add-proof-experiment-harness/`](./openspec/changes/add-proof-experiment-harness/) (proposal + design + per-capability spec + tasks + a QA review that flagged three P0s and eight P1s, all addressed in the artifacts before this README change). The narrative pre-sketch with download lists and fork-vs-depend decisions is at [`cardano-wiki/wiki/pages/omega-testnet-e2e-plan.md`](./cardano-wiki/wiki/pages/omega-testnet-e2e-plan.md). The optional Cardano-tx-validation feature on `omega-mock-ledger` (default off) pulls in `pallas-validate = "=1.0.0-alpha.6"` so a developer can feed real preview-testnet transactions through the same pipeline as an LGN claim.
+
+## Goblins — the agentic load mix
+
+![Six goblin roles: Holder, Whale, Adversary, Lurker, SnapshotServer, Validator. Six fantasy goblin illustrations on parchment, each on a stone pedestal, with cyan-glowing cryptographic elements](./assets/goblins-hero.png)
+
+One human submitting one proof at a time is enough to demonstrate end-to-end soundness. It is not enough to *exercise* LoganNet under realistic load — there is no mix of well-behaved holders, adversarial replays, batched-collection whales, snapshot-service consumers, or validator outages. The Goblins are the answer: autonomous agents that role-play on LoganNet at parameterizable scale, plan their actions via local Gemma-4 E4B inference (Ollama by default; `MockLlmClient` for CI), and surface harness regressions through their failure modes. They are simulation tools, not part of the protocol. They never appear in any Omega genesis ceremony.
+
+The framework ships six default roles. Each goblin runs an observe-plan-act loop against the same `omega-api` every other client uses; an LLM call produces a structured plan, a Rust parser maps the plan to an `Action`, the goblin submits and observes via the API. Malformed LLM output falls back to a deterministic per-role default, and a Prometheus counter tracks the rate.
+
+| Role | What it does | Failure mode it surfaces |
+|---|---|---|
+| **Holder** | Picks an unclaimed leaf, builds a single-leaf `claim_utxo`, submits, observes apply | Happy-path regressions in the prover, verifier, or API |
+| **Whale** | Builds a `ClaimCollection` of K leaves (K ∈ [10, 1024]); LLM picks K from observed apply latency | Batched-prove memory ceiling; per-batch verifier latency |
+| **Adversary** | Replays a known-good claim, tampers a proof byte, submits malformed CBOR, attacks a wrong bundle root | Verifier soundness regressions — **the runner panics if an Adversary is accepted**, because that is impossible by design |
+| **Lurker** | Subscribes to `WS /v1/events`, polls state, emits LLM-generated plain-English summaries every M ticks | Gives a human reading a 30-min log a way to skim what happened without re-deriving it from raw traces |
+| **SnapshotServer** | Hosts a libp2p protocol that serves Merkle paths for holders' witness construction; stand-in for the future T5 mirror partnerchain | Wallet ⇄ snapshot-service interface drift |
+| **Validator** | Runs *outside* the Raft cluster via a sidecar admin channel; requests controlled disruptions (pause node, sever network, force snapshot) | Consensus brittleness under partition, snapshot-mid-leader-change, restart-durability |
+
+To run a goblin simulation:
+
+```bash
+ollama pull gemma4:e4b   # one-time prerequisite, ~3 GB download
+omega-goblins run --holders 5 --whales 1 --adversaries 2 --lurkers 1 \
+                  --snapshot-servers 1 --validators 0 \
+                  --duration 30s --llm http://127.0.0.1:11434
+curl -s http://127.0.0.1:9090/metrics | grep goblin_ticks_total
+```
+
+`MockLlmClient` is the default for CI: `omega-goblins run --holders 5 --llm mock --duration 30s` runs the same observe-plan-act loop against scripted plans, no GPU required. The full design is in [`openspec/changes/add-goblin-agentic-framework/`](./openspec/changes/add-goblin-agentic-framework/) (three new crates: `omega-api`, `omega-goblin-core`, `omega-goblin-runner`; modified `omega-experiment` CLI to talk to `/v1/` instead of an internal RPC).
+
+A few cultural notes on the goblins. The Adversary is a feature: it asserts on every tick that the API rejected its submission, and crashes the runner with the offending bytes if accepted — that crash is how harness regressions get surfaced loudly rather than silently. The Validator runs outside the cluster on a separate control channel and never impersonates a Raft node, so even a misbehaving Validator cannot violate consensus invariants. The Lurker's plain-English summaries are the cheapest way to make a 30-minute simulation log human-skimmable; they cost one extra LLM call per minute and remove a lot of pain from "what just happened over there."
+
 ## How to read this repo
 
 Both subdirectories are self-contained. To run code, go to `omega-commitment/`, run `cargo test --workspace`, and read the per-crate READMEs. The workspace has five member crates (`omega-commitment-core` library, `omega-commitment-bundle` and `omega-commitment-ingest` library+binary pairs, plus standalone `omega-commitment-cli` and `omega-utxo-snapshot` binaries) and a tests tree with three layers of golden vectors that catch the regression categories that have broken in past versions. Test count is 282 as of v0.9.1, all green.
@@ -343,6 +430,8 @@ A few cryptographic choices in the diagram are easy to misread and deserve calli
 | T2 consensus (Crypsinous + Chronos + Minotaur composition) | Spec section drafted; hash-based VRF construction is the load-bearing open research question |
 | T3 smart-contract VM (Starstream upstream tracking) | Upstream impl-plan being tracked; type checker / IVC / MCC / lookups TODO upstream |
 | T5 mirror partnerchain (Filecoin fork) | Spec section drafted; engineering-shaped, six to twelve months for basic test-network |
+| LoganNet local-cluster harness (3 × openraft + libp2p + rusqlite) | Designed in [`openspec/changes/add-proof-experiment-harness/`](./openspec/changes/add-proof-experiment-harness/); QA-reviewed; awaiting Codex implementation |
+| Goblin agentic framework (Gemma-4 E4B via Ollama; six default roles) | Designed in [`openspec/changes/add-goblin-agentic-framework/`](./openspec/changes/add-goblin-agentic-framework/); awaiting Codex implementation |
 
 The work that landed in the last 72 hours rewrote my mental model of v1.0. The original plan, written 2026-05-01, assumed a single CBOR dump of the full LedgerState produced by `cardano-cli query ledger-state --output-cbor`. That command does not exist in cardano-cli 10.16; the supported output formats are JSON, text, and YAML. The CBOR path was an assumption that did not survive contact with the tool. I should have caught it at the spec stage instead of at the implementation stage.
 
