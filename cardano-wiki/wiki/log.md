@@ -368,3 +368,10 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 - Status table gains two rows tracking the OpenSpec changes (`add-proof-experiment-harness`, `add-goblin-agentic-framework`).
 - Design spec at `cardano-wiki/docs/superpowers/specs/2026-05-03-loganet-goblins-readme-expansion-design.md`.
 - README size: 483 → 572 lines (+89). humanizer scan clean.
+
+## [2026-05-03] plan | proof-experiment harness batch 1 - omega-claim-tx
+- Scope: OpenSpec `add-proof-experiment-harness` tasks 1.1-1.6 only. The batch adds the `omega-claim-tx` crate before any prover, verifier, ledger, network, or CLI code.
+- Wire surface: `ClaimTx::Utxo`, `ClaimTx::Collection`, `ClaimPublicInputs`, `ClaimWitness`, and `ProofBytes`, with serde derives and a fixed-order minicbor codec.
+- CBOR shape: versioned envelope `[version, payload, blake3(payload)]`, with canonical inner payloads. The checksum lets the codec reject byte flips inside proof, witness, root, or nullifier byte strings before verifier code runs.
+- Tests: proptest round trips for both variants, deterministic tamper rejection, pre-encode rejection for collection arity mismatch, and a 1024-leaf collection size check under the 32 MiB task bound.
+- Verification before ticking tasks: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace --no-fail-fast` all exited 0 from `omega-commitment/`.

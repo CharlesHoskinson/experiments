@@ -4,12 +4,12 @@ Implementation order. Each task is gated on the previous one passing `cargo test
 
 ## 1. omega-claim-tx
 
-- [ ] 1.1 Create `crates/omega-claim-tx/` with `Cargo.toml` declaring `serde`, `minicbor`, `thiserror`, `omega-commitment-core` (path dep) workspace deps.
-- [ ] 1.2 Define `ClaimTx`, `ClaimUtxo`, `ClaimCollection`, `ClaimPublicInputs`, `ClaimWitness`, `ProofBytes` types with `#[derive(Serialize, Deserialize)]`.
-- [ ] 1.3 Implement CBOR encode + decode via `minicbor` (parity with omega-commitment-ingest).
-- [ ] 1.4 Add `proptest` round-trip tests: encode then decode equals original for both variants.
-- [ ] 1.5 Add `cbor_size_within_bounds` test asserting a 1024-leaf `ClaimCollection` encodes within 32 MiB.
-- [ ] 1.6 Document the wire format in `crates/omega-claim-tx/README.md` with byte layout.
+- [x] 1.1 Create `crates/omega-claim-tx/` with `Cargo.toml` declaring `serde`, `minicbor`, `thiserror`, `omega-commitment-core` (path dep) workspace deps.
+- [x] 1.2 Define `ClaimTx`, `ClaimUtxo`, `ClaimCollection`, `ClaimPublicInputs`, `ClaimWitness`, `ProofBytes` types with `#[derive(Serialize, Deserialize)]`.
+- [x] 1.3 Implement CBOR encode + decode via `minicbor` (parity with omega-commitment-ingest).
+- [x] 1.4 Add `proptest` round-trip tests: encode then decode equals original for both variants.
+- [x] 1.5 Add `cbor_size_within_bounds` test asserting a 1024-leaf `ClaimCollection` encodes within 32 MiB.
+- [x] 1.6 Document the wire format in `crates/omega-claim-tx/README.md` with byte layout.
 
 ## 2. omega-claim-prover
 

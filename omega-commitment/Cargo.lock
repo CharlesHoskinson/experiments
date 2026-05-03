@@ -713,6 +713,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "omega-claim-tx"
+version = "0.11.0"
+dependencies = [
+ "hex",
+ "minicbor",
+ "omega-commitment-core",
+ "proptest",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "omega-commitment-bundle"
 version = "0.10.0-rc1"
 dependencies = [

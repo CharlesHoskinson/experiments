@@ -6,6 +6,7 @@ members = [
   "crates/omega-commitment-bundle",
   "crates/omega-commitment-ingest",
   "crates/omega-utxo-snapshot",
+  "crates/omega-claim-tx",
 ]
 
 [workspace.package]
@@ -24,3 +25,4 @@ thiserror = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 proptest = "1.6"
 criterion = "0.5"
+minicbor = { version = "0.20", features = ["std"] }
