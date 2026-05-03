@@ -1,4 +1,5 @@
-//! Stake-state sub-tree ingestion from a hand-crafted stake_snapshot.cbor.
+//! Stake-state sub-tree ingestion: shipped (v0.9.x synthetic, v1.0
+//! mainnet pending Task 4 of `2026-05-01-omega-v1.0-real-mainnet-ingestion-plan.md`).
 //!
 //! Top-level CBOR array of 5-element entries:
 //!   [ stake_credential_hash (28),
@@ -13,7 +14,7 @@
 //! `omega_commitment_core::stake_state_leaf::DrepDelegation`.
 
 use crate::cbor::{expect_end, read_28_bytes, read_array_len, read_u64, read_u8};
-use anyhow::Result;
+use crate::IngestError;
 use omega_commitment_core::stake_state_leaf::{DrepDelegation, StakeEntry};
 use pallas_codec::minicbor::Decoder;
 use serde::Serialize;
@@ -23,14 +24,17 @@ pub struct StakeOutput {
     pub stake_entries: Vec<StakeEntry>,
 }
 
-pub fn ingest_stake(cbor: &[u8]) -> Result<StakeOutput> {
+pub fn ingest_stake(cbor: &[u8]) -> Result<StakeOutput, IngestError> {
     let mut d = Decoder::new(cbor);
     let n = read_array_len(&mut d)?;
     let mut stake_entries = Vec::with_capacity(n);
     for _ in 0..n {
         let arity = read_array_len(&mut d)?;
         if arity != 5 {
-            return Err(anyhow::anyhow!("stake entry must be 5-elem, got {arity}"));
+            return Err(IngestError::schema(
+                "stake.entry",
+                format!("stake entry must be 5-elem, got {arity}"),
+            ));
         }
         let stake_credential_hash = read_28_bytes(&mut d)?;
         let delegated_pool = read_28_bytes(&mut d)?;
@@ -56,7 +60,7 @@ pub fn ingest_stake(cbor: &[u8]) -> Result<StakeOutput> {
 /// Tag table mirrors `DrepDelegation::tag_byte`:
 ///   `0x00` = None, `0x01` = KeyHash, `0x02` = ScriptHash,
 ///   `0x03` = AlwaysAbstain, `0x04` = AlwaysNoConfidence.
-fn read_drep(d: &mut Decoder<'_>) -> Result<DrepDelegation> {
+fn read_drep(d: &mut Decoder<'_>) -> anyhow::Result<DrepDelegation> {
     let arity = read_array_len(d)?;
     if arity == 0 || arity > 2 {
         return Err(anyhow::anyhow!(

@@ -18,6 +18,7 @@
 
 use crate::recompute::recompute;
 use crate::sub_tree_id::ALL;
+use crate::BundleError;
 use omega_commitment_core::hash::{blake2b_256, sha3_256, Hash};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -55,14 +56,15 @@ pub struct BundleRecord {
 ///
 /// `input_dir` must contain exactly seven files named per
 /// `SubTreeId::filename()`. Any missing file produces an error.
-pub fn assemble(input_dir: &Path) -> anyhow::Result<BundleRecord> {
+pub fn assemble(input_dir: &Path) -> Result<BundleRecord, BundleError> {
     let mut sub_trees: Vec<SubTreeRecord> = Vec::with_capacity(7);
     for st in ALL {
         let path = input_dir.join(st.filename());
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("cannot read sub-tree input {}: {}", path.display(), e))?;
-        let roots = recompute(st, &raw)
-            .map_err(|e| anyhow::anyhow!("cannot recompute {}: {}", st.label(), e))?;
+        let raw = fs::read_to_string(&path).map_err(|e| BundleError::io(&path, e))?;
+        let roots = recompute(st, &raw).map_err(|e| BundleError::Recompute {
+            sub_tree: st.label().to_string(),
+            source: e,
+        })?;
         sub_trees.push(SubTreeRecord {
             sub_tree: st.label().to_string(),
             blake2b_root: roots.blake2b_root,
@@ -84,8 +86,9 @@ pub fn assemble(input_dir: &Path) -> anyhow::Result<BundleRecord> {
 }
 
 /// Re-run assembly against `input_dir` and confirm the resulting roots
-/// match the published `bundle`. Returns `Ok(())` on match; an
-/// `anyhow::Error` describing the mismatch otherwise.
+/// match the published `bundle`. Returns `Ok(())` on match; a
+/// [`BundleError::Mismatch`] (or [`BundleError::SchemaVersionMismatch`])
+/// describing the mismatch otherwise.
 ///
 /// In addition to the root checks, this verifier explicitly asserts
 /// that the published `item_count` for every sub-tree matches the
@@ -94,51 +97,53 @@ pub fn assemble(input_dir: &Path) -> anyhow::Result<BundleRecord> {
 /// inclusion proof: an inclusion witness whose claimed index is
 /// `>= item_count` MUST be rejected as a padding-leaf forgery
 /// (audit finding A1/F003, closed in Batch 1).
-pub fn verify(bundle: &BundleRecord, input_dir: &Path) -> anyhow::Result<()> {
+pub fn verify(bundle: &BundleRecord, input_dir: &Path) -> Result<(), BundleError> {
     let fresh = assemble(input_dir)?;
     if fresh.blake2b_bundle_root != bundle.blake2b_bundle_root {
-        anyhow::bail!(
-            "blake2b_bundle_root mismatch: bundle says {}, recomputed {}",
-            hex::encode(bundle.blake2b_bundle_root),
-            hex::encode(fresh.blake2b_bundle_root)
-        );
+        return Err(BundleError::Mismatch {
+            field: "blake2b_bundle_root".to_string(),
+            published: hex::encode(bundle.blake2b_bundle_root),
+            recomputed: hex::encode(fresh.blake2b_bundle_root),
+        });
     }
     if fresh.sha3_bundle_root != bundle.sha3_bundle_root {
-        anyhow::bail!(
-            "sha3_bundle_root mismatch: bundle says {}, recomputed {}",
-            hex::encode(bundle.sha3_bundle_root),
-            hex::encode(fresh.sha3_bundle_root)
-        );
+        return Err(BundleError::Mismatch {
+            field: "sha3_bundle_root".to_string(),
+            published: hex::encode(bundle.sha3_bundle_root),
+            recomputed: hex::encode(fresh.sha3_bundle_root),
+        });
     }
     // Explicit per-sub-tree item_count check: catches a published
     // commitment whose leaf set has been padded but whose item_count
     // was forged to admit a padding-leaf inclusion proof.
     if fresh.sub_trees.len() != bundle.sub_trees.len() {
-        anyhow::bail!(
-            "sub_trees length mismatch: bundle has {}, recomputed {}",
-            bundle.sub_trees.len(),
-            fresh.sub_trees.len()
-        );
+        return Err(BundleError::Mismatch {
+            field: "sub_trees.len".to_string(),
+            published: bundle.sub_trees.len().to_string(),
+            recomputed: fresh.sub_trees.len().to_string(),
+        });
     }
     for (published, recomputed) in bundle.sub_trees.iter().zip(fresh.sub_trees.iter()) {
         if published.item_count != recomputed.item_count {
-            anyhow::bail!(
-                "item_count mismatch for sub-tree {}: bundle says {}, recomputed {}",
-                published.sub_tree,
-                published.item_count,
-                recomputed.item_count
-            );
+            return Err(BundleError::Mismatch {
+                field: format!("item_count[{}]", published.sub_tree),
+                published: published.item_count.to_string(),
+                recomputed: recomputed.item_count.to_string(),
+            });
         }
     }
     if fresh.sub_trees != bundle.sub_trees {
-        anyhow::bail!("sub_trees array mismatch (per-sub-tree records differ)");
+        return Err(BundleError::Mismatch {
+            field: "sub_trees".to_string(),
+            published: "<per-sub-tree records>".to_string(),
+            recomputed: "<per-sub-tree records differ>".to_string(),
+        });
     }
     if fresh.schema_version != bundle.schema_version {
-        anyhow::bail!(
-            "schema_version mismatch: bundle says {}, current {}",
-            bundle.schema_version,
-            fresh.schema_version
-        );
+        return Err(BundleError::SchemaVersionMismatch {
+            published: bundle.schema_version,
+            current: fresh.schema_version,
+        });
     }
     Ok(())
 }
@@ -270,7 +275,8 @@ mod tests {
         let result = verify(&bundle, dir.path());
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("blake2b_bundle_root mismatch"), "got: {msg}");
+        assert!(msg.contains("blake2b_bundle_root"), "got: {msg}");
+        assert!(msg.contains("mismatch"), "got: {msg}");
     }
 
     #[test]
@@ -282,7 +288,8 @@ mod tests {
         let result = verify(&bundle, dir.path());
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("sha3_bundle_root mismatch"), "got: {msg}");
+        assert!(msg.contains("sha3_bundle_root"), "got: {msg}");
+        assert!(msg.contains("mismatch"), "got: {msg}");
     }
 
     #[test]

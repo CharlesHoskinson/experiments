@@ -86,9 +86,13 @@ fn read_vmhwm() -> u64 {
 }
 
 fn main() -> anyhow::Result<()> {
-    let path = env::args()
-        .nth(1)
-        .expect("usage: probe_ledger_state_paths <path-to-ledger.json>");
+    let path = match env::args().nth(1) {
+        Some(p) => p,
+        None => {
+            eprintln!("usage: probe_ledger_state_paths <path-to-ledger.json>");
+            std::process::exit(2);
+        }
+    };
     eprintln!("probe: opening {path}");
     let started = Instant::now();
     let file = File::open(&path)?;

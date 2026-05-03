@@ -1,5 +1,5 @@
-//! Governance-state sub-tree ingestion from a hand-crafted
-//! governance_snapshot.cbor.
+//! Governance-state sub-tree ingestion: shipped (v0.9.x synthetic, v1.0
+//! mainnet pending Task 4 of `2026-05-01-omega-v1.0-real-mainnet-ingestion-plan.md`).
 //!
 //! Top-level CBOR array of variable-arity entries:
 //!   - kind 0..=3: `[ kind (u8), key (32 bytes),
@@ -16,7 +16,7 @@
 //! respectively.
 
 use crate::cbor::{expect_end, read_32_bytes, read_array_len, read_u128_bytes, read_u64, read_u8};
-use anyhow::Result;
+use crate::IngestError;
 use omega_commitment_core::governance_state_leaf::{kind, GovernanceFact};
 use pallas_codec::minicbor::Decoder;
 use serde::Serialize;
@@ -26,7 +26,7 @@ pub struct GovernanceOutput {
     pub facts: Vec<GovernanceFact>,
 }
 
-pub fn ingest_governance(cbor: &[u8]) -> Result<GovernanceOutput> {
+pub fn ingest_governance(cbor: &[u8]) -> Result<GovernanceOutput, IngestError> {
     let mut d = Decoder::new(cbor);
     let n = read_array_len(&mut d)?;
     let mut facts = Vec::with_capacity(n);
@@ -37,8 +37,9 @@ pub fn ingest_governance(cbor: &[u8]) -> Result<GovernanceOutput> {
         match kind_byte {
             kind::TREASURY | kind::CC_SEAT | kind::RATIFIED_ACTION | kind::IN_FLIGHT_ACTION => {
                 if arity != 4 {
-                    return Err(anyhow::anyhow!(
-                        "governance fact (kind={kind_byte}) must be 4-elem, got {arity}"
+                    return Err(IngestError::schema(
+                        "governance.fact",
+                        format!("kind={kind_byte} must be 4-elem, got {arity}"),
                     ));
                 }
                 let key = read_32_bytes(&mut d)?;
@@ -54,8 +55,9 @@ pub fn ingest_governance(cbor: &[u8]) -> Result<GovernanceOutput> {
             }
             kind::ACCOUNT_STATE => {
                 if arity != 5 {
-                    return Err(anyhow::anyhow!(
-                        "AccountState (kind=4) must be 5-elem [kind, reserves, treasury, deposits, fee_pot], got {arity}"
+                    return Err(IngestError::schema(
+                        "governance.account_state",
+                        format!("kind=4 must be 5-elem [kind, reserves, treasury, deposits, fee_pot], got {arity}"),
                     ));
                 }
                 let reserves = read_account_pot(&mut d, "reserves")?;
@@ -63,8 +65,9 @@ pub fn ingest_governance(cbor: &[u8]) -> Result<GovernanceOutput> {
                 let deposits = read_account_pot(&mut d, "deposits")?;
                 let fee_pot = read_account_pot(&mut d, "fee_pot")?;
                 if saw_account_state {
-                    return Err(anyhow::anyhow!(
-                        "duplicate AccountState entry: snapshot must carry exactly one"
+                    return Err(IngestError::schema(
+                        "governance.account_state",
+                        "duplicate AccountState entry: snapshot must carry exactly one",
                     ));
                 }
                 saw_account_state = true;
@@ -76,8 +79,9 @@ pub fn ingest_governance(cbor: &[u8]) -> Result<GovernanceOutput> {
                 });
             }
             other => {
-                return Err(anyhow::anyhow!(
-                    "unknown governance fact kind byte 0x{other:02x}"
+                return Err(IngestError::schema(
+                    "governance.fact",
+                    format!("unknown governance fact kind byte 0x{other:02x}"),
                 ))
             }
         }
@@ -89,7 +93,7 @@ pub fn ingest_governance(cbor: &[u8]) -> Result<GovernanceOutput> {
 /// Read one AccountState pot (u64). Wrapping in a helper produces a
 /// readable error pointing at the missing field name when the wire
 /// format truncates partway through.
-fn read_account_pot(d: &mut Decoder<'_>, name: &str) -> Result<u64> {
+fn read_account_pot(d: &mut Decoder<'_>, name: &str) -> anyhow::Result<u64> {
     read_u64(d).map_err(|e| anyhow::anyhow!("AccountState missing pot '{name}': {e}"))
 }
 

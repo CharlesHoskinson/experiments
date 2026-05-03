@@ -16,7 +16,7 @@ cssclass: wiki-page
 
 A **clean-slate post-quantum fork** of Cardano with ZK-proved continuity to all prior eras. New chain inherits no UTXOs, no scripts, no governance state — only an **Ω-Commitment**: a single hash rooting seven sub-trees of the old chain's final state, attested by Mithril-PQ + recursive Plonky3 STARK + CIP-1694 governance.
 
-**Full design doc:** `/home/hoskinson/cardano-wiki/docs/superpowers/specs/2026-05-01-ouroboros-omega-design.md`
+**Full design doc:** `docs/superpowers/specs/2026-05-01-ouroboros-omega-design.md` (relative to the cardano-wiki root)
 
 ## Locked decisions (one-line each)
 
@@ -28,7 +28,7 @@ A **clean-slate post-quantum fork** of Cardano with ZK-proved continuity to all 
 6. Crypto: **post-quantum throughout, no exceptions**
 7. Sigs: **PQ-only from day one** (no dual-sig)
 8. ZK system: **Plonky3** (FRI / hash-only / recursion-friendly)
-9. **Dual-hash:** selective — bundle root is a `(blake2b, sha3)` tuple; per-leaf and per-sub-tree are Blake2b-only. Decision doc: `/home/hoskinson/cardano-wiki/docs/superpowers/decisions/2026-05-01-omega-dual-hash-decision.md`
+9. **Dual-hash:** selective — bundle root is a `(blake2b, sha3)` tuple; per-leaf and per-sub-tree are Blake2b-only. Decision doc: `docs/superpowers/decisions/2026-05-01-omega-dual-hash-decision.md` (relative to the cardano-wiki root)
 
 ## Six claim types on the new chain
 

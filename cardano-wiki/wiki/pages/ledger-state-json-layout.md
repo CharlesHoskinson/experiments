@@ -2,15 +2,16 @@
 title: LedgerState JSON layout (cardano-cli 10.16, mainnet, Conway era)
 slug: ledger-state-json-layout
 tags: [ingestion, ledger-state, cardano-cli, mainnet, conway, omega]
-sources: ["cardano-cli 10.16.0.0 conway query ledger-state", "live mainnet dump 2026-05-02 epoch 628"]
+sources: [cardano-cli-10.16, mainnet-ledger-dump-2026-05-02-epoch-628, omega-commitment-ingest-probe]
 confidence: high
 provenance:
-  - kind: live-measurement
-    when: 2026-05-03
-    artifact: /home/hoskinson/cardano/snapshots/ledger_state_20260502_235649.json (2.04 GiB)
-    measured-by: omega-commitment-ingest/examples/probe_ledger_state_paths.rs
+  - cardano-cli-10.16 -> structural shape of `conway query ledger-state` JSON output (json/text/yaml only; --output-cbor not supported).
+  - mainnet-ledger-dump-2026-05-02-epoch-628 -> exact entity counts (1.47M stake accounts, 1,016 DReps, 2,940 stake pools, 15 governance proposals, etc.) measured against the 2.04 GiB live dump at slot 186,209,073.
+  - omega-commitment-ingest-probe -> RAM/file ratio (3.24x), parse wall (6.47s), peak VmHWM (6.46 GiB) measured by `omega-commitment-ingest/examples/probe_ledger_state_paths.rs` against the same dump.
 created: 2026-05-03
 updated: 2026-05-03
+aliases: [ledger-state-paths, conway-query-ledger-state-json]
+cssclass: wiki-page
 ---
 
 # LedgerState JSON layout (cardano-cli 10.16 / mainnet / Conway)

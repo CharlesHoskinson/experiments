@@ -1,10 +1,11 @@
-//! Script-registry sub-tree ingestion from the v0.9.0 extended CBOR fixture.
+//! Script-registry sub-tree ingestion: shipped (v0.9.x synthetic, v1.0
+//! mainnet pending Task 4 of `2026-05-01-omega-v1.0-real-mainnet-ingestion-plan.md`).
 //!
 //! Walks each UTXO's optional `script_credential` field, deduplicates by
 //! `script_hash`, and emits the script-registry leaf entries. Output is
 //! sorted by `script_hash` for stability.
 //!
-//! `deployment_slot` is pinned to `0` (the simplified fixture does not
+//! `deployment_slot` is pinned to `0` (the synthetic fixture does not
 //! carry per-script deployment timing; real-data ingestion will pull
 //! this from chain history in v1.0).
 
@@ -12,7 +13,7 @@ use crate::cbor::{
     expect_end, read_28_bytes, read_32_bytes, read_array_len, read_map_len, read_null_marker,
     read_u32, read_u64, read_u8, read_var_bytes,
 };
-use anyhow::Result;
+use crate::IngestError;
 use omega_commitment_core::script_registry_leaf::ScriptEntry;
 use pallas_codec::minicbor::Decoder;
 use serde::Serialize;
@@ -27,15 +28,16 @@ pub struct ScriptOutput {
 /// fixture's per-UTXO `script_credential` field. Deduplicates by
 /// `script_hash`; if the same hash appears with different metadata
 /// across UTXOs, the first occurrence wins.
-pub fn ingest_scripts(cbor: &[u8]) -> Result<ScriptOutput> {
+pub fn ingest_scripts(cbor: &[u8]) -> Result<ScriptOutput, IngestError> {
     let mut seen: BTreeMap<[u8; 28], ScriptEntry> = BTreeMap::new();
     let mut d = Decoder::new(cbor);
     let n = read_array_len(&mut d)?;
     for _ in 0..n {
         let arity = read_array_len(&mut d)?;
         if arity != 4 && arity != 6 {
-            return Err(anyhow::anyhow!(
-                "utxo entry must be 4-elem or 6-elem, got {arity}"
+            return Err(IngestError::schema(
+                "script.utxo_entry",
+                format!("utxo entry must be 4-elem or 6-elem, got {arity}"),
             ));
         }
         let _tx_id = read_32_bytes(&mut d)?;
@@ -60,7 +62,10 @@ pub fn ingest_scripts(cbor: &[u8]) -> Result<ScriptOutput> {
         }
         let arity = read_array_len(&mut d)?;
         if arity != 3 {
-            return Err(anyhow::anyhow!("script_credential arity {arity} != 3"));
+            return Err(IngestError::schema(
+                "script.credential",
+                format!("script_credential arity {arity} != 3"),
+            ));
         }
         let script_hash: [u8; 28] = read_28_bytes(&mut d)?;
         let language: u8 = read_u8(&mut d)?;

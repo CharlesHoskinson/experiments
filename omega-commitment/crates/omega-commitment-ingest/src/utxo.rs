@@ -10,7 +10,7 @@ use crate::cbor::{
     expect_end, read_28_bytes, read_32_bytes, read_array_len, read_map_len, read_null_marker,
     read_u32, read_u64, read_u8, read_var_bytes,
 };
-use anyhow::Result;
+use crate::IngestError;
 use omega_commitment_core::utxo_leaf::{DatumOption, Utxo};
 use pallas_codec::minicbor::Decoder;
 use serde::Serialize;
@@ -35,20 +35,22 @@ pub struct UtxoOutput {
 /// header byte is preserved verbatim. The fixture historically wrote a
 /// 32-byte placeholder there — that placeholder is still accepted as
 /// an opaque address when the fixture predates Batch 2.
-pub fn ingest_utxos(cbor: &[u8]) -> Result<UtxoOutput> {
+pub fn ingest_utxos(cbor: &[u8]) -> Result<UtxoOutput, IngestError> {
     let mut d = Decoder::new(cbor);
     let n = read_array_len(&mut d)?;
     let mut utxos = Vec::with_capacity(n);
     for _ in 0..n {
         let arity = read_array_len(&mut d)?;
         if arity != 4 && arity != 6 {
-            return Err(anyhow::anyhow!(
-                "utxo entry must be 4-elem (v0.8 minimal) or 6-elem (v0.9 extended), got {arity}"
+            return Err(IngestError::schema(
+                "utxo.entry",
+                format!("utxo entry must be 4-elem (v0.8 minimal) or 6-elem (v0.9 extended), got {arity}"),
             ));
         }
         let tx_id = read_32_bytes(&mut d)?;
-        let output_index = u32::try_from(read_u64(&mut d)?)
-            .map_err(|_| anyhow::anyhow!("output_index too large for u32"))?;
+        let output_index = u32::try_from(read_u64(&mut d)?).map_err(|_| {
+            IngestError::schema("utxo.output_index", "output_index too large for u32")
+        })?;
         let address = read_var_bytes(&mut d)?;
         let value_lovelace = read_u64(&mut d)?;
         let mut assets = Vec::new();

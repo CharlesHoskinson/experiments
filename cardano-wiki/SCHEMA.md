@@ -46,7 +46,12 @@ Use `[[slug]]` where slug = filename without `.md`.
 ```
 ## [YYYY-MM-DD] <operation> | <title>
 ```
-Operations: init, ingest, query, update, lint, search, merge, export, research
+Operations: init, ingest, query, update, lint, search, merge, export, research, plan, execute, decision, spec, artifact, codex-audit, infra, verify, discovery, audit-defer, resolve
+
+The vocabulary is non-exhaustive — new in-flight kinds (e.g. plan, execute,
+decision, spec, artifact, codex-audit, infra, verify, discovery, resolve,
+audit-defer) were added 2026-05-03 to track the full Ouroboros-Omega
+program activity, including the resolution sweep against `audit/SUMMARY.md`.
 
 ## Index Categories
 - Protocol & Consensus
@@ -55,8 +60,15 @@ Operations: init, ingest, query, update, lint, search, merge, export, research
 - Governance & Voltaire
 - Ecosystem & Organizations
 - Research & Roadmap
+- Mainnet Ingestion (omega-commitment v1.0)
 - Repositories
 - Maintenance
+
+The category list is non-exhaustive — new categories may be added when a
+coherent topic cluster (≥ 2 wiki pages) emerges that does not fit any
+existing slot. The 2026-05-03 addition of "Mainnet Ingestion" reflects
+the v1.0 ingestion-pipeline work (`ledger-state-json-layout`,
+`lsq-getutxowhole-pipeline`).
 
 ## Obsidian Integration
 - Obsidian compatibility: enabled

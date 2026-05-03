@@ -2,17 +2,18 @@
 title: LSQ GetUTxOWhole pipeline (omega-utxo-snapshot binary)
 slug: lsq-getutxowhole-pipeline
 tags: [ingestion, utxo, lsq, pallas-network, omega, cardano-cli, txix-bug]
-sources: ["pallas-network 0.30.2", "cardano-cli 10.16.0.0", "PR IntersectMBO/cardano-cli#1350", "Cardano/Ledger/Address.hs"]
+sources: [pallas-network-0.30.2, cardano-cli-10.16, intersect-pr-1350, cardano-ledger-address-hs, omega-utxo-snapshot-impl]
 confidence: medium
 provenance:
-  - kind: in-tree-implementation
-    when: 2026-05-03
-    artifact: /home/hoskinson/omega-commitment/crates/omega-utxo-snapshot/
-  - kind: live-discovery
-    when: 2026-05-03
-    artifact: failed cardano-cli --whole-utxo run at /home/hoskinson/cardano/logs/utxo_dump.log
+  - pallas-network-0.30.2 -> wire-format of LocalStateQuery `BlockQuery::GetUTxOWhole` (Conway era index 6); `Client::query<_, AnyCbor>` buffers the full response.
+  - cardano-cli-10.16 -> documented behavior of `query utxo --whole-utxo` ("only appropriate on small testnets") and the empirical `DeserialiseFailure "Decoding TxIx: More than 16bits was supplied"` at byte 978,211,479 of the response stream.
+  - intersect-pr-1350 -> evidence that the upstream Haskell decoder bug has a known but unmerged hotfix (cardano-ledger TxIx Word16-VLE → Word64-VLE).
+  - cardano-ledger-address-hs -> root-cause line numbers (`Address.hs:847` reads Word16-VLE; `Address.hs:348` `putPtr` writes Word64-VLE) for the encoder/decoder asymmetry on pointer-address TxIx.
+  - omega-utxo-snapshot-impl -> in-tree implementation at `omega-commitment/crates/omega-utxo-snapshot/`; verified wire-format match against the Haskell stack 2026-05-03; mainnet smoke-test ran 22+ minutes without `MsgQueryFailure`.
 created: 2026-05-03
 updated: 2026-05-03
+aliases: [omega-utxo-snapshot, lsq-utxo-pipeline, getutxowhole]
+cssclass: wiki-page
 ---
 
 # LSQ GetUTxOWhole pipeline

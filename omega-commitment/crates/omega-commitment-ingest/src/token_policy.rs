@@ -1,9 +1,10 @@
-//! Token-policy sub-tree ingestion from the v0.9.0 extended CBOR fixture.
+//! Token-policy sub-tree ingestion: shipped (v0.9.x synthetic, v1.0
+//! mainnet pending Task 4 of `2026-05-01-omega-v1.0-real-mainnet-ingestion-plan.md`).
 //!
 //! Walks each UTXO's `multi_assets` map and aggregates per-`policy_id`:
 //!   - `total_supply_at_h` = sum of quantities across all assets in all
 //!     UTXOs that mention this policy.
-//!   - `first_issuance_slot` = pinned to `0` (the simplified fixture
+//!   - `first_issuance_slot` = pinned to `0` (the synthetic fixture
 //!     does not carry per-policy timing data; real-data ingestion will
 //!     pull this from chain history in v1.0).
 //!
@@ -13,7 +14,7 @@ use crate::cbor::{
     expect_end, read_28_bytes, read_32_bytes, read_array_len, read_map_len, read_null_marker,
     read_u32, read_u64, read_u8, read_var_bytes,
 };
-use anyhow::Result;
+use crate::IngestError;
 use omega_commitment_core::token_policy_leaf::TokenPolicy;
 use pallas_codec::minicbor::Decoder;
 use serde::Serialize;
@@ -30,15 +31,16 @@ pub struct TokenPolicyOutput {
 /// Only the v0.9.0 extended (6-elem) fixture format carries multi-asset
 /// data. If the input is the v0.8.0 minimal (4-elem) format, no policies
 /// are emitted (the result is `policies: []`).
-pub fn ingest_token_policies(cbor: &[u8]) -> Result<TokenPolicyOutput> {
+pub fn ingest_token_policies(cbor: &[u8]) -> Result<TokenPolicyOutput, IngestError> {
     let mut totals: BTreeMap<[u8; 28], u128> = BTreeMap::new();
     let mut d = Decoder::new(cbor);
     let n = read_array_len(&mut d)?;
     for _ in 0..n {
         let arity = read_array_len(&mut d)?;
         if arity != 4 && arity != 6 {
-            return Err(anyhow::anyhow!(
-                "utxo entry must be 4-elem or 6-elem, got {arity}"
+            return Err(IngestError::schema(
+                "token_policy.utxo_entry",
+                format!("utxo entry must be 4-elem or 6-elem, got {arity}"),
             ));
         }
         let _tx_id = read_32_bytes(&mut d)?;
@@ -71,7 +73,10 @@ pub fn ingest_token_policies(cbor: &[u8]) -> Result<TokenPolicyOutput> {
         if !read_null_marker(&mut d)? {
             let arity = read_array_len(&mut d)?;
             if arity != 3 {
-                return Err(anyhow::anyhow!("script_credential arity {arity} != 3"));
+                return Err(IngestError::schema(
+                    "token_policy.script_credential",
+                    format!("script_credential arity {arity} != 3"),
+                ));
             }
             let _hash: [u8; 28] = read_28_bytes(&mut d)?;
             let _language: u8 = read_u8(&mut d)?;

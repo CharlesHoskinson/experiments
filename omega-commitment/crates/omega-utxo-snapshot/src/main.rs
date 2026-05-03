@@ -181,7 +181,19 @@ async fn main() -> Result<()> {
         .await
         .context("GetUTxOWhole query failed")?;
 
-    let bytes = raw.to_vec();
+    // Release the LSQ session BEFORE the multi-GB disk write so the
+    // node-side acquisition lifetime is bounded by the network round-trip
+    // rather than by local disk I/O. Closes audit finding A6/F001
+    // (Batch 5, 2026-05-03 resolution plan).
+    sq.send_release().await.context("LSQ release")?;
+    sq.send_done().await.context("LSQ done")?;
+
+    // Move bytes out of `AnyCbor` without copying: pallas-codec 0.30.2
+    // exposes `AnyCbor::unwrap(self) -> Vec<u8>` which surrenders the
+    // inner `Vec<u8>` allocation directly. The previous `raw.to_vec()`
+    // call cloned the buffer (multi-GB on mainnet); `unwrap()` is a
+    // zero-copy move. Closes audit finding A6/F001.
+    let bytes = raw.unwrap();
     let len = bytes.len();
     tokio::fs::write(&args.out, &bytes)
         .await
@@ -191,9 +203,6 @@ async fn main() -> Result<()> {
     // pass to validate the bytes the LSQ producer emits before they reach the
     // omega-ingest mainnet parser. Audit finding A2/F001 (deferred per the
     // 2026-05-03 audit resolution plan, Batch 4 step 6).
-
-    sq.send_release().await.context("LSQ release")?;
-    sq.send_done().await.context("LSQ done")?;
 
     let elapsed = started.elapsed();
     eprintln!(
