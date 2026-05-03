@@ -149,18 +149,47 @@ The snapshot is partitioned into N Merkle-chunks (~64 MiB each ≈ 3,400 chunks 
 
 **Effect.** A holder needs only the chunk(s) containing their leaf, not the whole 218 GB. A storage-bounty hunter can earn rewards by proving they hold any specific chunk. Replication becomes economically tractable per-chunk rather than monolithic-or-nothing.
 
-### 6.3 Archival bounty
-A perpetual treasury allocation (Wikimedia-Endowment-shaped, ≈ $5M principal at 4% safe-withdrawal-rate funds ~$200K/year storage operations) funds storage-proof challenges paid in ADA/ωADA.
+### 6.3 Archival bounty (treasury layer)
+A perpetual treasury allocation (Wikimedia-Endowment-shaped, ≈ $5M principal at 4% safe-withdrawal-rate funds ~$200K/year storage operations) funds storage-proof challenges paid in ωADA.
 
-**Mechanism.** Anyone may submit a chunk-availability proof to a periodically-rotating challenge protocol. The protocol pays a small ADA reward per honored proof, rate-limited and stake-bonded against false claims. **No designated operator.** Anyone proving they hold any chunk earns. Encourages geographic, jurisdictional, and infrastructural diversity.
+**Mechanism.** Anyone may submit a chunk-availability proof to a periodically-rotating challenge protocol. The protocol pays a small ωADA reward per honored proof, rate-limited and stake-bonded against false claims. **No designated operator.** Anyone proving they hold any chunk earns. Encourages geographic, jurisdictional, and infrastructural diversity.
 
-### 6.4 What the chain does NOT do
+### 6.4 What the Omega chain does NOT do
 - Does not host snapshot data.
 - Does not mandate a mirror operator.
 - Does not provide a query API for historical state (those are application-layer services run by anyone who wants to).
 - Does not fund any specific party — only the storage-proof challenge mechanism.
 
-## 7. Crypsinous-PQ consensus integration
+### 6.5 Mirror partnerchain (forked Filecoin)
+
+The §6.3 storage-proof bounty alone funds replication; it does not provide a market for **retrieval**. A holder claiming in 2046 needs not just "the data exists somewhere" but "the data is fetchable from someone right now at predictable cost." For that we run a separate partnerchain — a fork of [Filecoin](https://github.com/filecoin-project) — under the Cardano [partnerchain model](https://github.com/input-output-hk/partner-chains) the same way Midnight runs.
+
+**Forking Filecoin, not adopting it as-is.** Filecoin's existing mainnet uses ECDSA / BLS / Groth16 — none PQ. The fork replaces all curve cryptography with the PQ stack from §1: SLH-DSA / ML-DSA / FN-DSA for signatures, hash-based threshold for any aggregation, Plonky3 STARKs in place of Groth16. Filecoin's storage proofs (PoRep, PoSt, the Window-PoSt time-bounded variant) are already hash-and-Merkle-based; porting them to Blake2b/SHA3/Poseidon2 is mechanical. The economic model (storage providers post bonds; sealing creates verifiable storage commitments; periodic spacetime proofs maintain liveness) survives unchanged. Approximate work: ~6-12 months engineering, comparable in scope to Filecoin's original mainnet launch from the spec.
+
+**Partnerchain model.** Cardano's partnerchain SDK lets a partnerchain inherit security from Cardano's stake distribution: SPOs on Cardano can opt to also validate the partnerchain, earning rewards on both. For the Omega-Mirror chain this means storage providers become double-revenue: Filecoin-style storage market fees (paid by retrievers) plus Omega-side block rewards (paid by Omega's treasury). The mirror chain's consensus is itself Minotaur-shaped, with PoSpaceTime as the dominant resource and a small PoS slice for liveness.
+
+**What the mirror partnerchain stores.**
+- Every snapshot chunk per §6.2 (the 218 GB Cardano-era state, partitioned into ~3,400 ~64 MiB Merkle chunks)
+- Per-chunk Window-PoSt proofs that the data is currently retrievable
+- Optional: any chunked archive of post-genesis Omega state for users who want their post-claim data preserved with the same guarantees
+
+**Retrieval interface.** Standard Filecoin retrieval miner protocol: a holder sends a retrieval request specifying chunk ID; one or more storage providers respond with the data plus a Merkle proof of correctness against the on-chain commitment. Holders pay a tiny fee per retrieval (denominated in mirror-chain native asset, redeemable for ωADA via the partnerchain bridge).
+
+**The mirror partnerchain is OPTIONAL infrastructure.** Omega's correctness does not depend on it. Holders who keep their own data still claim directly. The mirror exists as a market-priced convenience layer for the long tail of holders who do not bother with self-storage. This preserves the "chain has the resolution machinery; holders bring proofs" property — the mirror is one of many possible providers of those proofs, not a privileged operator. The §6.3 bounty rewards anyone who can prove possession; the mirror partnerchain is the most natural earner of that bounty at scale, but it is not the only earner.
+
+**Coupling to Minotaur (§7.2).** The mirror partnerchain's storage providers are also a consensus resource for Omega via Minotaur. Capturing Omega's consensus now requires capturing both Omega-stake AND a meaningful fraction of the mirror chain's storage market. The two attack surfaces have different cost structures (stake = capital markets; storage = data centre buildout) and different jurisdictional profiles. This is the key economic coupling that the user-asked-for "design the requirements for a mirror network" produces: not just an archive, but a consensus-level diversification.
+
+**What the mirror partnerchain is NOT.**
+- It is NOT a privileged operator. Anyone can run a storage provider.
+- It is NOT a censorship surface. The Omega chain's claim verifier never reads from the mirror; it only reads holder-submitted proofs.
+- It is NOT a single point of failure. If the mirror chain fails entirely, holders who kept their own data are unaffected; holders who relied on the mirror lose the convenience of cheap retrieval but their underlying claim rights are preserved.
+- It is NOT a regulator-friendly backdoor. The mirror chain stores public data (the Cardano-era snapshot is already public on Cardano); retrieval is permissionless; storage providers cannot selectively withhold without losing their bond. Privacy of post-claim Omega state still flows through Crypsinous + Starstream + holder-controlled viewing keys per §5.
+
+## 7. Consensus stack: Crypsinous + Chronos + Minotaur, all PQ
+
+The consensus layer is three composable Ouroboros papers, each updated for the PQ + privacy infrastructure of §1-§5.
+
+### 7.0 Crypsinous-PQ (privacy)
 
 PQ-Crypsinous adapts eprint 2018/1132 to the privacy infrastructure above. Composition with the claim layer collapses three primitives I had as separate (consensus shielding, mempool encryption, claim privacy) into one coherent threshold-encryption layer.
 
@@ -174,6 +203,43 @@ PQ-Crypsinous adapts eprint 2018/1132 to the privacy infrastructure above. Compo
 | Sapling note encryption | Hybrid KEM (ML-KEM + AEAD) |
 
 **Encrypted mempool.** Threshold-encrypted to per-epoch stake-weighted committee. Validators commit to ordering before they can decrypt. Closes OFAC validator censorship + recipient front-running + mempool surveillance + validator reordering simultaneously.
+
+### 7.1 Chronos (time)
+
+Ouroboros Chronos (Badertscher-Gaži-Kiayias-Russell-Zikas, [eprint 2019/838](https://eprint.iacr.org/2019/838)) replaces external clock-synchronization assumptions with a permissionless PoS-based global clock. Verbatim from the abstract: *"We design and analyze a PoS blockchain protocol in the above dynamic-participation setting, that does not require a global clock but merely assumes that parties have local clocks advancing at approximately the same speed... we obtain a permissionless PoS implementation of a global clock that may be used by higher level protocols that need access to global time."*
+
+**Why Omega needs it.** Praos and Crypsinous both inherit a synchrony assumption that joining parties already have a common notion of round/slot time. In a clean-slate chain that begins from a mass-MPC ceremony rather than a trusted-time-server, this assumption is operationally fragile (state-actor pressure on NTP infrastructure is a documented attack against Praos validators). Chronos replaces the external clock with a synchroniser primitive built into the consensus protocol itself.
+
+**Composition.** Chronos extends Crypsinous's primitive set: shared VRF, shared stake snapshot, additional synchroniser sub-protocol that re-aligns joining parties' local clocks within a few rounds. The threshold-encryption committee that decrypts the encrypted mempool is the same committee whose epoch boundaries Chronos pins. No new committee, no new key.
+
+**PQ caveat.** Chronos depends on the same VRF whose hash-based PQ replacement is §15 open issue #1. Closing that issue closes both Crypsinous and Chronos in one stroke.
+
+### 7.2 Minotaur (multi-resource)
+
+Minotaur (Fitzi-Wang-Kannan-Kiayias-Leonardos-Viswanath-Wang, [eprint 2022/104](https://eprint.iacr.org/2022/104)) generalises consensus to combine multiple resource types in a single longest-chain protocol. Verbatim: *"Minotaur, a multi-resource blockchain consensus protocol that combines proof of work (PoW) and proof-of-stake (PoS), and we prove it optimally fungible. At the core of our design, Minotaur operates in epochs while continuously sampling the active computational power to provide a fair exchange between the two resources, work and stake. Further... we generalize Minotaur to any number of resources."*
+
+**Security model.** Optimally fungible: secure when `ω · β_w + (1−ω) · β_s < 1/2` for any weighting `ω ∈ [0, 1]`, where `β_w` is the adversarial fraction of one resource and `β_s` of the other. **The honest majority must hold across the *combined* resource pool, not in any single resource alone.** An attacker who captures 60% of stake but only 20% of work does not break the chain; they need cumulative honest minority across the union.
+
+**Why Omega needs it.** Pure-PoS exposes Omega to single-resource capture (Steemit precedent at small scale; nation-state acquiring 33% ADA-equivalent at large scale). Minotaur lets Omega couple consensus security to multiple independent economic resources at once. The two we adopt:
+
+1. **Stake** — ωADA-bonded validators, the natural inheritance from Cardano.
+2. **Storage** — proof-of-space-time tied to the §6.5 mirror partnerchain. Operators who provide verifiable storage for the snapshot archive earn consensus weight in addition to their storage rewards. **This is the key economic coupling**: capturing Omega's consensus now requires capturing both stake AND a meaningful fraction of the global storage market simultaneously. Two distinct attack surfaces with different cost structures.
+
+**Generalised composition.** Minotaur's "any number of resources" property leaves room for adding proof-of-work (existing Bitcoin / hash-rate market), proof-of-bandwidth, or proof-of-uptime as future resources. The protocol parameter set in §13 controls which resources are weighted and at what `ω`. Adding a resource is a CIP-1694-shaped governance vote constrained by the §13.1 guardrails script (no resource that grants disclosure capability is permitted).
+
+**PQ caveat.** Minotaur as published uses the same curve primitives Crypsinous does. Replacing them with the PQ stack from §1 is mechanical: PoS leader-election uses the hash-based VRF, PoSpaceTime uses standard hash commitments (already PQ), threshold aggregation uses the leanXMSS family.
+
+### 7.3 The combined picture
+
+Crypsinous (privacy) + Chronos (time) + Minotaur (multi-resource) compose because all three are descendants of Ouroboros and share the same security-proof framework (Universal Composability, common reference string structure adapted for PQ). The composition theorem comes for free; the engineering work is replacing curve primitives with PQ ones consistently across all three protocols.
+
+The composite protocol has the following properties:
+- Permissionless PoS + PoSpaceTime, with optional future resources
+- All operations PQ
+- Shielded VRF, stake, rewards, mempool ordering
+- Permissionless self-clocking (no external NTP dependency)
+- Honest-majority security across the union of stake and storage
+- Single per-epoch threshold-encryption committee handles claim-mempool decryption, Crypsinous flow encryption, Chronos round attestations
 
 ## 8. Validator-set diversity
 
@@ -336,6 +402,9 @@ These remain unresolved and gate v2.0 publication readiness:
 5. **Guardrails-script entrenchment depth.** Whether the §13.1 guardrails script update path is forbidden entirely or requires a higher-than-supermajority quorum (e.g. 90% DRep + 90% SPO + unanimous CC). The latter preserves a theoretical escape hatch but creates a target. The former is cleaner but assumes any future need to update the guardrails will route through chain replacement.
 6. **Plutus → Starstream translation.** §14.1 punts the translation of Cardano-era Plutus scripts into Starstream coroutines to a community / compiler-team responsibility. Specific decision points: which Plutus Core semantics (the [RuntimeVerification K-spec](https://github.com/runtimeverification/plutus-core-semantics) or the Agda formal-ledger spec) is the source-of-truth; whether translation is automated or holder-submitted; whether script-hash-equivalence is verified by the protocol or attested via dApp re-deployment.
 7. **Starstream's IVC / MCC / lookups upstream maturity.** Per the upstream impl-plan.md, these are marked TODO. Omega's T3 / T6 tracks depend on these landing. Tracking via upstream rather than re-implementing.
+8. **Filecoin PQ-port scope.** §6.5 calls for a fork of Filecoin with all curve crypto replaced by the §1 PQ stack. Scope estimate ~6-12 months engineering but the actual work breakdown — which Filecoin actor types port first, whether to fork at the protocol-spec level vs the lotus-implementation level, what's the test-network bootstrap path — is unscoped.
+9. **Minotaur weighting parameter `ω`.** The PoS / PoSpaceTime split (`ω` in the Minotaur security inequality) is a tunable governance parameter. Initial value, rotation policy, and constitutional constraints (per §13.1, can governance push `ω = 1` and effectively disable storage-resource consensus?) need explicit specification.
+10. **Mirror partnerchain economic model.** The mirror chain pays its operators in (a) per-retrieval fees from holders + (b) Omega-treasury block rewards. The split, the per-retrieval price floor, and the long-term sustainability under declining ωADA prices are all unscoped.
 
 ## Self-review
 
