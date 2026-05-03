@@ -1,5 +1,27 @@
 #!/usr/bin/env bash
 #
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !! DEBUG ONLY — does NOT verify the Mithril certificate.                  !!
+# !!                                                                        !!
+# !! This helper fetches a snapshot tarball directly from the aggregator    !!
+# !! over HTTPS and extracts it. It does NOT run mithril-client and it      !!
+# !! does NOT cross-check the snapshot against the Mithril genesis or       !!
+# !! ancillary verification keys. Use it ONLY for ingestion-experiment      !!
+# !! smoke-tests where the source of truth is the in-tree hand-crafted     !!
+# !! CBOR fixture.                                                          !!
+# !!                                                                        !!
+# !! For PRODUCTION snapshots (anything that ends up feeding omega-ingest   !!
+# !! mainnet, omega-utxo-snapshot pinned-manifest acquisition, or any v1.0  !!
+# !! reproducible-build artefact) follow Step 4 of                          !!
+# !!     scripts/setup_headless_node.md                                     !!
+# !! which uses `mithril-client cardano-db download --include-ancillary`   !!
+# !! with GENESIS_VERIFICATION_KEY and ANCILLARY_VERIFICATION_KEY set       !!
+# !! against the published mainnet keys. That path verifies the Mithril    !!
+# !! certificate before unpacking; this script does not.                    !!
+# !!                                                                        !!
+# !! Audit reference: A10/F002 (2026-05-03 Codex audit).                    !!
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
 # Download a recent Mithril-attested Cardano snapshot for manual QA.
 #
 # Usage:
@@ -15,6 +37,14 @@
 # the in-tree hand-crafted CBOR fixture.
 
 set -euo pipefail
+
+cat >&2 <<'WARN'
+================================================================================
+download_snapshot.sh: DEBUG ONLY — Mithril certificate is NOT verified.
+For production snapshots, see setup_headless_node.md Step 4 (mithril-client
+with GENESIS_VERIFICATION_KEY + ANCILLARY_VERIFICATION_KEY).
+================================================================================
+WARN
 
 AGGREGATOR_URL="${1:-https://aggregator.pre-release-preview.api.mithril.network/aggregator}"
 DEST_DIR="$(cd "$(dirname "$0")/.." && pwd)/var/snapshots"

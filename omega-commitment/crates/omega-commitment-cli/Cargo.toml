@@ -16,7 +16,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 hex.workspace = true
 thiserror.workspace = true
-anyhow = "1"
-tempfile = "3"
+anyhow = "1.0"
+tempfile = "3.27"
 
 [dev-dependencies]

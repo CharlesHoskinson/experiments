@@ -27,6 +27,16 @@ This runbook is what's currently being executed against `/home/hoskinson/cardano
 
 ## 2. Download binaries
 
+> **Checksum verification is best-effort.** The `sha256sum -c -` invocations
+> below carry a placeholder hash (`<paste-sha256-here>`); replace it with the
+> published SHA-256 from the IntersectMBO and input-output-hk release pages
+> before running the script. The release pages are:
+> - cardano-node: <https://github.com/IntersectMBO/cardano-node/releases/tag/10.7.1>
+> - mithril:      <https://github.com/input-output-hk/mithril/releases/tag/2617.0>
+>
+> Cross-check the downloaded tarball against the SHA-256 published on the
+> release page before proceeding. Audit reference: A10/F003 (2026-05-03).
+
 ```bash
 mkdir -p ~/cardano/{bin,config,db,socket,logs,downloads}
 cd ~/cardano/downloads
@@ -34,11 +44,13 @@ cd ~/cardano/downloads
 # cardano-node 10.7.1 (matches Daedalus 8.0's bundled version)
 curl -fSL -o cardano-node-10.7.1-linux-amd64.tar.gz \
   https://github.com/IntersectMBO/cardano-node/releases/download/10.7.1/cardano-node-10.7.1-linux-amd64.tar.gz
+echo "<paste-sha256-here>  cardano-node-10.7.1-linux-amd64.tar.gz" | sha256sum -c -
 tar -xzf cardano-node-10.7.1-linux-amd64.tar.gz -C cn-extract --strip-components 0
 
 # mithril-client 2617.0
 curl -fSL -o mithril-2617.0-linux-x64.tar.gz \
   https://github.com/input-output-hk/mithril/releases/download/2617.0/mithril-2617.0-linux-x64.tar.gz
+echo "<paste-sha256-here>  mithril-2617.0-linux-x64.tar.gz" | sha256sum -c -
 mkdir -p mithril-extract && tar -xzf mithril-2617.0-linux-x64.tar.gz -C mithril-extract
 
 # Install

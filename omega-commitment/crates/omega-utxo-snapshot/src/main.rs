@@ -187,6 +187,11 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("write {}", args.out.display()))?;
 
+    // TODO(v1.0 Task 4): implement pallas_codec::minicbor::Decoder<'_, GetUTxOWholeResponse>
+    // pass to validate the bytes the LSQ producer emits before they reach the
+    // omega-ingest mainnet parser. Audit finding A2/F001 (deferred per the
+    // 2026-05-03 audit resolution plan, Batch 4 step 6).
+
     sq.send_release().await.context("LSQ release")?;
     sq.send_done().await.context("LSQ done")?;
 
