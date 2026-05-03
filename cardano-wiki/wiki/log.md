@@ -380,3 +380,18 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 - assets/loganet-logo.png added (CryptoLobster mascot, deep blue-purple carapace with cyan circuit-glow, holding the Cardano three-circle logo in left claw and an LGN coin in right claw, parchment background matching the goblins-hero illustration's visual identity)
 - Embedded centered at the top of the `## LoganNet` README section via a centered HTML <img> at width=320 (sized for the README without dominating the page)
 - Same visual set as assets/goblins-hero.png — same parchment + cyan-glow palette, same painterly fantasy register
+
+## [2026-05-03] plan | proof-experiment harness batch 2 - omega-claim-prover
+- Scope: OpenSpec `add-proof-experiment-harness` tasks 2.1-2.3 and 2.5-2.7. Task 2.4 stays open because the current code emits a separate Blake3 compression proof instead of a Plonky3 permutation-argument join between membership rows and compression rows. Task 2.8 stays open until Criterion is run and measured numbers are recorded.
+- Plonky3 pin: workspace `p3-*` dependencies all use rev `fc774b10eb66b1e4b75a1825e1af7acb98bcc71a`; harness crates consume them via `workspace = true`.
+- New crate: `omega-claim-prover` with `OmegaCommitment`, `MembershipWitness`, `ProverConfig`, `ProverError`, `OmegaMembershipAir`, and `prove_collection`.
+- Proof envelope: one Plonky3 proof over the membership transcript, plus one `p3-blake3-air` compression proof. The prover validates the v1 Blake3 Merkle path and rejects oversized leaf payloads before proof emission.
+- Tests: `tests/prover_smoke.rs` builds a 256-leaf v1 UTxO tree, proves leaf 42, rejects a tampered sibling path, and rejects a 35-byte payload that creates a 65-byte v0.1 leaf preimage.
+- Verification before ticking tasks: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --no-fail-fast`, `openspec validate add-proof-experiment-harness --strict`, and `openspec validate add-goblin-agentic-framework --strict` all exited 0.
+
+## [2026-05-03] spec | LoganNet CLI experience v3.1 — proper lobster banner + goblin strip restored
+- Spec at docs/superpowers/specs/2026-05-03-loganet-cli-experience-design.md (v3.1)
+- v3 regression reverted: the heraldic-sigil banner was unrecognisable as a lobster; replaced with a 14-row × 60-col creature drawing with raised claws, framed Cardano + LGN emblems, eye stalks, segmented carapace, splayed tail fan
+- v3 dropped the goblin strip from the dashboard; v3.1 restored it: 5-row strip of all six role glyphs side-by-side, greyed out (loganet.muted) for roles with count=0 so the layout never shifts
+- Kept everything else from v3: three banner widths (compact/default/wide), four palette themes (default/highcontrast/monochrome/deuteranopia), single-slot sticky alarm row, sparkline-per-role at 16-bucket × 1s, two-phase drain on q with 5s budget + countdown footer, ^Z handling, LF-normalised snapshots, CI matrix on Linux+macOS+Windows
+- Crate name: omega-tui (single source of truth for banners/goblins/style/progress/dashboard/keybinds across all three binaries)
