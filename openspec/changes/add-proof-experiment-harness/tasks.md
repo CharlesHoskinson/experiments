@@ -13,13 +13,14 @@ Implementation order. Each task is gated on the previous one passing `cargo test
 
 ## 2. omega-claim-prover
 
-- [ ] 2.1 Pin Plonky3 in workspace `[workspace.dependencies]` once: `plonky3 = { git = "https://github.com/Plonky3/Plonky3", rev = "<40-char-hash captured at first build>" }`. Every harness crate consumes via `workspace = true` (single source of truth — no per-crate independent rev).
-- [ ] 2.2 Create `crates/omega-claim-prover/` with deps on `p3-uni-stark`, `p3-baby-bear`, `p3-poseidon2`, `p3-poseidon2-air`, `p3-blake3-air`, `p3-merkle-tree`, `p3-symmetric`, `p3-fri`, `p3-challenger`, `p3-commit`, `p3-field`, `p3-matrix`, `p3-dft` — all via `workspace = true`.
-- [ ] 2.3 Define `OmegaMembershipAir` implementing `p3_air::Air<AB>`. Trace columns: sub_tree_id, leaf_index_be, payload (≤ 64 bytes per the v0.1 leaf-size restriction), intermediate Blake3 compression state, sibling-hash buffer, current-node hash. One row per Merkle path step.
+- [x] 2.1 Pin Plonky3 in workspace `[workspace.dependencies]` once: `plonky3 = { git = "https://github.com/Plonky3/Plonky3", rev = "<40-char-hash captured at first build>" }`. Every harness crate consumes via `workspace = true` (single source of truth — no per-crate independent rev).
+- [x] 2.2 Create `crates/omega-claim-prover/` with deps on `p3-uni-stark`, `p3-baby-bear`, `p3-poseidon2`, `p3-poseidon2-air`, `p3-blake3-air`, `p3-merkle-tree`, `p3-symmetric`, `p3-fri`, `p3-challenger`, `p3-commit`, `p3-field`, `p3-matrix`, `p3-dft` — all via `workspace = true`.
+- [x] 2.3 Define `OmegaMembershipAir` implementing `p3_air::Air<AB>`. Trace columns: sub_tree_id, leaf_index_be, payload buffer (capped so the full v1 leaf preimage is ≤ 64 bytes), intermediate Blake3 compression state, sibling-hash buffer, current-node hash. One row per Merkle path step.
 - [ ] 2.4 Wire the AIR up to `p3-blake3-air` via permutation argument so leaf-hash and node-hash *compressions* are discharged by the upstream Blake3 gadget. Add an explicit comment that this constrains the compression function only; preimage gluing for ≤ 64-byte leaves is checked deterministically by the verifier (no separate AIR needed because the preimage fits in one compression block).
-- [ ] 2.5 Implement `prove_collection(commitment, witnesses, config) -> Result<ProofBytes, ProverError>` using `p3_uni_stark::prove`. Reject witnesses with leaf payloads that would push the preimage past 64 bytes with `ProverError::LeafTooLargeForV01`.
-- [ ] 2.6 Match the prover config to `var/upstream/Plonky3/examples/examples/prove_prime_field_31.rs` (BabyBear, Poseidon2 Merkle, recursive-DFT, default FRI).
-- [ ] 2.7 Add `tests/prover_smoke.rs`: build a 256-leaf synthetic UTxO sub-tree with `omega-commitment-core::Tree::build_v1`, prove inclusion of leaf 42, assert proof bytes non-empty.
+- Implementation note 2026-05-03: the current batch emits a separate `p3-blake3-air` compression proof inside the proof envelope and keeps deterministic preimage/path gluing in the verifier boundary. The task remains open until the membership AIR and Blake3 compression rows are joined by an actual Plonky3 permutation argument.
+- [x] 2.5 Implement `prove_collection(commitment, witnesses, config) -> Result<ProofBytes, ProverError>` using `p3_uni_stark::prove`. Reject witnesses with leaf payloads that would push the preimage past 64 bytes with `ProverError::LeafTooLargeForV01`.
+- [x] 2.6 Match the prover config to `var/upstream/Plonky3/examples/examples/prove_prime_field_31.rs` (BabyBear, Poseidon2 Merkle, recursive-DFT, default FRI).
+- [x] 2.7 Add `tests/prover_smoke.rs`: build a 256-leaf synthetic UTxO sub-tree with `omega-commitment-core::Tree::build_v1`, prove inclusion of leaf 42, assert proof bytes non-empty.
 - [ ] 2.8 Add `bench_prove_p50.rs` criterion bench measuring 1, 16, 256-leaf prove latency. Capture results into a markdown report; only after measurement is the spec.md SLA finalized.
 
 ## 3. omega-claim-verifier
