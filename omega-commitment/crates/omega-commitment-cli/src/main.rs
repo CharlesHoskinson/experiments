@@ -7,7 +7,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use omega_commitment_core::{
     governance_state_leaf::GovernanceFact,
-    hash::{blake2b_256, Hash},
+    hash::{blake3_256, Hash},
     header_leaf::BlockHeader,
     script_registry_leaf::ScriptEntry,
     stake_state_leaf::StakeEntry,
@@ -95,7 +95,7 @@ struct GovernanceInput {
 struct CommitmentRecord {
     /// Which Ω-Commitment sub-tree this record describes.
     sub_tree: SubTree,
-    /// Blake2b-256 of the raw input file bytes. Lets consumers confirm
+    /// Blake3-256 of the raw input file bytes. Lets consumers confirm
     /// the commitment is bound to a specific input snapshot.
     #[serde(with = "hex::serde")]
     input_digest: Hash,
@@ -225,7 +225,7 @@ fn commit(
         .map_err(|e| anyhow::anyhow!("cannot resolve output {}: {}", output.display(), e))?;
 
     let raw = fs::read_to_string(&input)?;
-    let input_digest = blake2b_256(raw.as_bytes());
+    let input_digest = blake3_256(raw.as_bytes());
 
     let (leaves, item_count) = match sub_tree {
         SubTree::Utxo => build_utxo_leaves(&raw)?,

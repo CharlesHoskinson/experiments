@@ -332,3 +332,23 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 - Humanizer pass: confirmed zero curly quotes (audit was a regex false-positive on plain ASCII `"`); zero forbidden AI vocabulary; em dashes confined to titles and ASCII diagram lane labels (consistent with the existing user style across the prior versions of these files); replaced two `leveraging` instances in RESEARCH-QUESTIONS.md with cleaner phrasings.
 - Author attribution: charles hoskinson <charles.hoskinson@gmail.com>, sole. The repo's commit-msg hook at `.git/hooks/commit-msg` continues to block any Claude co-author trailer; this commit passes that check.
 - Carries forward to: nothing immediate. The four root-level docs are now coherent against the cumulative spec; T6 (verifier circuit) and T7 (bridge protocol) work can develop against this surface, and the v1.0 / v1.1 commitment-tooling work in `omega-commitment/` continues unchanged.
+
+## [2026-05-03] verify | Plonky3 + Starstream proving stacks build and produce real ZK proofs out-of-the-box
+- Cloned Plonky3/Plonky3 HEAD into var/upstream/Plonky3/. Built `p3-examples::prove_prime_field_31` in 1m47s.
+- Ran `--field babybear --objective blake3-permutations --log-trace-length 10 --merkle-hash poseidon2 --discrete-fourier-transform recursive-dft`. Prove 3.43s, verify 204ms, proof 4.9 MiB. "Proof Verified Successfully."
+- Cloned LFDT-Nightstream/Starstream HEAD into var/upstream/Starstream/. Built `starstream-interleaving-proof` tests in 2m07s. Pulls neo-{fold,ccs,ajtai,params,vm-trace,memory} from sibling LFDT-Nightstream/Nightstream at pinned rev 8b32cc8f.
+- Ran `cargo test test_circuit_small`. 6-step coroutine trace (NewRef → RefPush → NewUtxo → Resume → Enter → Yield), 1174 R1CS constraints, 1248 variables. Proof generated in 92.4s (dev profile). Test passed.
+- Conclusion: both stacks usable as crate-deps without forking. Prototype path: Plonky3 alone for C1-C5 Merkle membership; vendor Starstream interleaving-spec later for the claim_utxo→Starstream-UTxO emission path. Load-bearing engineering item: write `p3-blake2b-air` (a week, port from blake3-air).
+- Wiki page: pages/omega-testnet-e2e-plan.md (Spike section appended)
+
+## [2026-05-03] migrate | Blake2b → Blake3 across the Ω-Commitment construction
+- Spec at docs/superpowers/specs/2026-05-03-blake3-migration-design.md
+- Why: Plonky3 ships p3-blake3-air upstream; eliminates the load-bearing "write p3-blake2b-air" T6 engineering item flagged in the 2026-05-03 testnet e2e plan.
+- Domain tags: `omega:v1:leaf` / `omega:v1:node` → `omega:v2:leaf` / `omega:v2:node` (preimages no longer collision-equivalent to v0.9.x outputs)
+- Workspace dep: `blake2 = "0.10"` → `blake3 = { version = "1", default-features = false }`
+- Function rename: `blake2b_256` → `blake3_256`; `leaf_hash_v1` / `node_hash_v1` → `leaf_hash_v2` / `node_hash_v2`
+- Field rename: `bundle_root_blake2b` → `bundle_root_blake3` (JSON shape unchanged, name only)
+- Ω-Commitment is still a 64-byte tuple `(blake3_root, sha3_root)`. SHA3 still drift-detection only (audit/findings/A1 F004 framing carries over).
+- All 25 golden vectors regenerated from the new code (per-leaf 10, per-sub-tree 7, bundle 2, ingest 6). 292 workspace tests green; cargo fmt --check + cargo clippy --workspace --all-targets -- -D warnings clean.
+- Crate versions bumped: 0.9.1 → 0.10.0-rc1 across all five crates.
+- Docs updated: README.md, ARCHITECTURE.md, GOALS.md, cardano-wiki/wiki/pages/omega-testnet-e2e-plan.md.

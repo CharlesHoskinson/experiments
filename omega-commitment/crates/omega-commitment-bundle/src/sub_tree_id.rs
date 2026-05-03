@@ -64,7 +64,7 @@ impl SubTreeId {
     }
 
     /// 1-byte numeric tag bound into every v1 leaf hash via
-    /// `omega_commitment_core::tree::leaf_hash_v1`. Mirrors the
+    /// `omega_commitment_core::tree::leaf_hash_v2`. Mirrors the
     /// `SUB_TREE_ID_*` constants in the core crate; kept in lockstep
     /// so the bundle layer never accidentally hashes a leaf under
     /// the wrong sub-tree.

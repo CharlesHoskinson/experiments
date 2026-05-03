@@ -4,7 +4,7 @@
 //!   (script_hash: 28 bytes) || (deployment_slot: u64 BE) ||
 //!   (script_size_bytes: u32 BE) || (language: u8)
 //!
-//! Total: 41 bytes. The leaf is hashed with Blake2b-256 to produce
+//! Total: 41 bytes. The leaf is hashed with Blake3-256 to produce
 //! the leaf hash that goes into the Merkle tree. This sub-tree powers
 //! `claim_script` transactions: developers re-anchor a validator hash
 //! on the new chain with verifiable lineage. Pure provenance/identity
@@ -12,7 +12,7 @@
 //!
 //! ## script_hash width
 //!
-//! Cardano script hashes are 28 bytes (Blake2b-224 of the canonical
+//! Cardano script hashes are 28 bytes (Blake3-224 of the canonical
 //! script bytes), matching the policy-hash width in `token_policy_leaf`.
 //! See that module's docstring for the full rationale on why preimage
 //! widths can differ from the 32-byte leaf-hash output.
@@ -28,11 +28,11 @@
 //! fixed `u8` slot rather than an open-ended enum so the byte layout
 //! stays stable across language additions.
 
-use crate::hash::{blake2b_256, Hash};
+use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// 28-byte Cardano script hash (Blake2b-224 of the canonical script
+/// 28-byte Cardano script hash (Blake3-224 of the canonical script
 /// bytes). Distinct from the 32-byte `Hash` type used for internal
 /// Merkle hashing.
 pub type ScriptHash = [u8; 28];
@@ -57,12 +57,12 @@ impl ScriptEntry {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
     /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
     /// canonical payload that the domain-separated Merkle builder
     /// consumes.
     pub fn leaf_hash(&self) -> Hash {
-        blake2b_256(&self.encode())
+        blake3_256(&self.encode())
     }
 
     /// Return the canonical raw payload bytes for the v1 Merkle
@@ -76,7 +76,7 @@ impl ScriptEntry {
 /// entries. Returns the index of the second occurrence of the first
 /// duplicate, or None if all `script_hash`es are unique.
 ///
-/// Cardano script hashes are deterministic Blake2b-224 of the
+/// Cardano script hashes are deterministic Blake3-224 of the
 /// canonical script bytes; duplicates indicate a data error
 /// (e.g., overlapping epoch ranges in the input snapshot). This is
 /// an OPTIONAL sanity helper; commitment generation does NOT require

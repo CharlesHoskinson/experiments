@@ -6,7 +6,7 @@
 //!   (rewards_lovelace: u64 BE) || (is_pool_operator: u8)
 //!
 //! Variable-length: 66 bytes (no DRep payload) or 94 bytes (28-byte
-//! credential payload). The leaf is hashed with Blake2b-256 to produce
+//! credential payload). The leaf is hashed with Blake3-256 to produce
 //! the leaf hash that goes into the Merkle tree. This sub-tree powers
 //! `claim_stake` transactions: users port over delegation, pool, and
 //! DRep history with verifiable lineage.
@@ -28,11 +28,11 @@
 //! delegation targets, NOT 28-byte hashes; storing them as their tag
 //! keeps the encoding faithful to the Conway ledger spec.
 
-use crate::hash::{blake2b_256, Hash};
+use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// 28-byte Cardano credential hash (Blake2b-224 of a stake key or
+/// 28-byte Cardano credential hash (Blake3-224 of a stake key or
 /// stake script). Used for `stake_credential_hash` and `delegated_pool`,
 /// and as the payload of [`DrepDelegation::KeyHash`] /
 /// [`DrepDelegation::ScriptHash`].
@@ -104,12 +104,12 @@ impl StakeEntry {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
     /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
     /// canonical payload that the domain-separated Merkle builder
     /// consumes.
     pub fn leaf_hash(&self) -> Hash {
-        blake2b_256(&self.encode())
+        blake3_256(&self.encode())
     }
 
     /// Return the canonical raw payload bytes for the v1 Merkle

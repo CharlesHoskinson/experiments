@@ -4,27 +4,27 @@
 //!   (policy_id: 28 bytes) || (first_issuance_slot: u64 BE) ||
 //!   (total_supply_at_h: u128 BE)
 //!
-//! Total: 52 bytes. The leaf is hashed with Blake2b-256 to produce
+//! Total: 52 bytes. The leaf is hashed with Blake3-256 to produce
 //! the leaf hash that goes into the Merkle tree. This sub-tree powers
 //! `claim_token_policy` transactions: token issuers can re-anchor a
 //! minting policy on the new chain with verifiable lineage.
 //!
 //! ## Note on policy_id width
 //!
-//! Cardano policy hashes are **28 bytes** (Blake2b-224 of the minting
+//! Cardano policy hashes are **28 bytes** (Blake3-224 of the minting
 //! script), not 32. This is the first cross-sub-tree asymmetry in the
 //! Ω-Commitment library. The 28-byte size is canonical Cardano
 //! ledger semantics; verifiers must encode policies as 28-byte values
 //! to compute leaf hashes consistent with on-chain identifiers.
 //!
-//! Note that the leaf hash itself remains Blake2b-256 → 32 bytes;
+//! Note that the leaf hash itself remains Blake3-256 → 32 bytes;
 //! only the preimage contains a 28-byte field.
 
-use crate::hash::{blake2b_256, Hash};
+use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// 28-byte Cardano native-token policy hash (Blake2b-224 of the
+/// 28-byte Cardano native-token policy hash (Blake3-224 of the
 /// minting script). Distinct from the 32-byte `Hash` type used for
 /// internal Merkle hashing.
 pub type PolicyId = [u8; 28];
@@ -47,12 +47,12 @@ impl TokenPolicy {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
     /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
     /// canonical payload that the domain-separated Merkle builder
     /// consumes.
     pub fn leaf_hash(&self) -> Hash {
-        blake2b_256(&self.encode())
+        blake3_256(&self.encode())
     }
 
     /// Return the canonical raw payload bytes for the v1 Merkle

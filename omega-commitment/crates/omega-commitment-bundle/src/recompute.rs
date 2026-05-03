@@ -2,30 +2,30 @@
 //!
 //! Given raw input bytes for a sub-tree (the JSON file the per-sub-tree
 //! CLI consumes), recompute:
-//!   - the v1 domain-separated Blake2b leaf set (one
-//!     `leaf_hash_v1(SUB_TREE_ID, canonical_index, payload)` per item)
-//!   - the v1 Blake2b Merkle root via `MerkleTree::build_v1`
-//!   - the SHA3 Merkle root over the SAME v1 Blake2b leaf hashes
+//!   - the v1 domain-separated Blake3 leaf set (one
+//!     `leaf_hash_v2(SUB_TREE_ID, canonical_index, payload)` per item)
+//!   - the v1 Blake3 Merkle root via `MerkleTree::build_v1`
+//!   - the SHA3 Merkle root over the SAME v1 Blake3 leaf hashes
 //!     (drift-detection — see Batch 1 framing in `bundle.rs`)
-//!   - the input digest (Blake2b-256 of raw input bytes)
+//!   - the input digest (Blake3-256 of raw input bytes)
 //!   - leaf_count, tree_depth, item_count
 //!
 //! Per the dual-hash decision (2026-05-01) and the 2026-05-03 audit
-//! reframing: the SHA3 path is NOT a Blake2b-break hedge — both trees
-//! are built from identical v1 Blake2b leaf hashes, so a leaf-level
-//! Blake2b break would defeat both roots. The SHA3 root catches drift
+//! reframing: the SHA3 path is NOT a Blake3-break hedge — both trees
+//! are built from identical v1 Blake3 leaf hashes, so a leaf-level
+//! Blake3 break would defeat both roots. The SHA3 root catches drift
 //! in the bundle aggregation step (and pre-pays the v2.0 fully-
 //! independent SHA3 tree).
 
 use crate::sub_tree_id::SubTreeId;
 use omega_commitment_core::{
     governance_state_leaf::GovernanceFact,
-    hash::{blake2b_256, sha3_256, Hash},
+    hash::{blake3_256, sha3_256, Hash},
     header_leaf::BlockHeader,
     script_registry_leaf::ScriptEntry,
     stake_state_leaf::StakeEntry,
     token_policy_leaf::TokenPolicy,
-    tree::{leaf_hash_v1, MerkleTree, EMPTY_INDEX_SENTINEL},
+    tree::{leaf_hash_v2, MerkleTree, EMPTY_INDEX_SENTINEL},
     tx_index_leaf::TxIndexEntry,
     utxo_leaf::Utxo,
     SUB_TREE_ID_GOVERNANCE, SUB_TREE_ID_HEADER, SUB_TREE_ID_SCRIPT, SUB_TREE_ID_STAKE,
@@ -35,7 +35,7 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubTreeRoots {
-    pub blake2b_root: Hash,
+    pub blake3_root: Hash,
     pub sha3_root: Hash,
     pub input_digest: Hash,
     pub leaf_count: usize,
@@ -78,14 +78,14 @@ struct GovernanceInput {
 /// if a leaf cannot encode (UTXO over u32 asset count, etc.), or if the
 /// v1 Merkle builder rejects duplicate canonical payloads.
 pub fn recompute(sub_tree: SubTreeId, raw: &str) -> anyhow::Result<SubTreeRoots> {
-    let input_digest = blake2b_256(raw.as_bytes());
+    let input_digest = blake3_256(raw.as_bytes());
     let (sub_tree_id, payloads, item_count) = build_payloads(sub_tree, raw)?;
     let tree = MerkleTree::build_v1(sub_tree_id, payloads.clone())
         .map_err(|e| anyhow::anyhow!("v1 build rejected sub-tree input: {e}"))?;
-    let blake2b_root = tree.root();
+    let blake3_root = tree.root();
     let sha3_root = sha3_root_of_v1(sub_tree_id, payloads);
     Ok(SubTreeRoots {
-        blake2b_root,
+        blake3_root,
         sha3_root,
         input_digest,
         leaf_count: tree.leaf_count(),
@@ -166,10 +166,10 @@ fn build_payloads(sub_tree: SubTreeId, raw: &str) -> anyhow::Result<(u8, Vec<Vec
     }
 }
 
-/// SHA3 Merkle aggregation over the v1 Blake2b leaf hashes.
+/// SHA3 Merkle aggregation over the v1 Blake3 leaf hashes.
 ///
 /// Mirrors `MerkleTree::build_v1` exactly — sort payloads, hash each
-/// with `leaf_hash_v1`, pad to next power of two with the
+/// with `leaf_hash_v2`, pad to next power of two with the
 /// `EMPTY_INDEX_SENTINEL` empty leaf — but substitutes raw SHA3-256 for
 /// the internal-node hash so a divergence between the two roots
 /// indicates aggregation drift.
@@ -178,11 +178,11 @@ fn sha3_root_of_v1(sub_tree_id: u8, mut payloads: Vec<Vec<u8>>) -> Hash {
     let mut leaves: Vec<Hash> = payloads
         .iter()
         .enumerate()
-        .map(|(i, p)| leaf_hash_v1(sub_tree_id, i as u64, p))
+        .map(|(i, p)| leaf_hash_v2(sub_tree_id, i as u64, p))
         .collect();
     let target = leaves.len().max(1).next_power_of_two();
     while leaves.len() < target {
-        leaves.push(leaf_hash_v1(sub_tree_id, EMPTY_INDEX_SENTINEL, &[]));
+        leaves.push(leaf_hash_v2(sub_tree_id, EMPTY_INDEX_SENTINEL, &[]));
     }
     let mut current = leaves;
     while current.len() > 1 {
@@ -224,11 +224,11 @@ mod tests {
         // 1 leaf padded to 1 (next power of two of 1 is 1).
         assert_eq!(r.leaf_count, 1);
         assert_eq!(r.tree_depth, 0);
-        assert_ne!(r.blake2b_root, [0u8; 32]);
+        assert_ne!(r.blake3_root, [0u8; 32]);
         assert_ne!(r.sha3_root, [0u8; 32]);
         // Note: at depth 0, both roots equal the single leaf hash, so we
         // do not assert they differ here. The divergence invariant is
-        // checked in `sha3_and_blake2b_roots_diverge_on_same_input`.
+        // checked in `sha3_and_blake3_roots_diverge_on_same_input`.
         assert_ne!(r.input_digest, [0u8; 32]);
     }
 
@@ -236,14 +236,14 @@ mod tests {
     fn recompute_is_deterministic() {
         let a = recompute(SubTreeId::Utxo, UTXO_FIXTURE).unwrap();
         let b = recompute(SubTreeId::Utxo, UTXO_FIXTURE).unwrap();
-        assert_eq!(a.blake2b_root, b.blake2b_root);
+        assert_eq!(a.blake3_root, b.blake3_root);
         assert_eq!(a.sha3_root, b.sha3_root);
         assert_eq!(a.input_digest, b.input_digest);
     }
 
     #[test]
-    fn recompute_blake2b_root_matches_v1_builder_directly() {
-        // The v1 Blake2b path inside recompute must agree with calling
+    fn recompute_blake3_root_matches_v1_builder_directly() {
+        // The v1 Blake3 path inside recompute must agree with calling
         // MerkleTree::build_v1 directly — this is the cross-check that
         // protects against any divergence between the bundle tool
         // and the per-sub-tree CLI.
@@ -255,7 +255,7 @@ mod tests {
             .collect();
         let tree = MerkleTree::build_v1(SUB_TREE_ID_UTXO, payloads).unwrap();
         let r = recompute(SubTreeId::Utxo, UTXO_FIXTURE).unwrap();
-        assert_eq!(r.blake2b_root, tree.root());
+        assert_eq!(r.blake3_root, tree.root());
     }
 
     #[test]
@@ -266,7 +266,7 @@ mod tests {
         let r = sha3_root_of_v1(SUB_TREE_ID_UTXO, vec![]);
         assert_ne!(r, ZERO_HASH);
         // Equals the v1 padding leaf hash directly (depth-0 tree).
-        assert_eq!(r, leaf_hash_v1(SUB_TREE_ID_UTXO, EMPTY_INDEX_SENTINEL, &[]));
+        assert_eq!(r, leaf_hash_v2(SUB_TREE_ID_UTXO, EMPTY_INDEX_SENTINEL, &[]));
     }
 
     #[test]
@@ -274,8 +274,8 @@ mod tests {
         let payload = b"only".to_vec();
         let r = sha3_root_of_v1(SUB_TREE_ID_UTXO, vec![payload.clone()]);
         // Single leaf, no padding needed (next_power_of_two(1) == 1).
-        // Depth-0: root == leaf == leaf_hash_v1(sub_tree, 0, payload).
-        assert_eq!(r, leaf_hash_v1(SUB_TREE_ID_UTXO, 0, &payload));
+        // Depth-0: root == leaf == leaf_hash_v2(sub_tree, 0, payload).
+        assert_eq!(r, leaf_hash_v2(SUB_TREE_ID_UTXO, 0, &payload));
     }
 
     #[test]
@@ -285,8 +285,8 @@ mod tests {
         // Sort to mirror the builder.
         let mut sorted = [a.clone(), b.clone()];
         sorted.sort();
-        let l0 = leaf_hash_v1(SUB_TREE_ID_UTXO, 0, &sorted[0]);
-        let l1 = leaf_hash_v1(SUB_TREE_ID_UTXO, 1, &sorted[1]);
+        let l0 = leaf_hash_v2(SUB_TREE_ID_UTXO, 0, &sorted[0]);
+        let l1 = leaf_hash_v2(SUB_TREE_ID_UTXO, 1, &sorted[1]);
         let mut buf = [0u8; 64];
         buf[..32].copy_from_slice(&l0);
         buf[32..].copy_from_slice(&l1);
@@ -295,8 +295,8 @@ mod tests {
     }
 
     #[test]
-    fn sha3_and_blake2b_roots_diverge_on_same_input() {
-        // Sanity: SHA3 and Blake2b roots of the same v1 leaf set must
+    fn sha3_and_blake3_roots_diverge_on_same_input() {
+        // Sanity: SHA3 and Blake3 roots of the same v1 leaf set must
         // differ once the tree has at least one internal-node layer.
         let payloads: Vec<Vec<u8>> = (0..8u8).map(|i| vec![i, 0xAA]).collect();
         let blake_root = MerkleTree::build_v1(SUB_TREE_ID_UTXO, payloads.clone())

@@ -4,10 +4,10 @@
 //!   (slot: u64 BE) || (block_height: u64 BE) ||
 //!   (block_hash: 32 bytes) || (prev_hash: 32 bytes)
 //!
-//! Total: 80 bytes. The leaf is hashed with Blake2b-256 to produce
+//! Total: 80 bytes. The leaf is hashed with Blake3-256 to produce
 //! the leaf hash that goes into the Merkle tree.
 
-use crate::hash::{blake2b_256, Hash};
+use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -31,12 +31,12 @@ impl BlockHeader {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
     /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
     /// canonical payload that the domain-separated Merkle builder
     /// consumes.
     pub fn leaf_hash(&self) -> Hash {
-        blake2b_256(&self.encode())
+        blake3_256(&self.encode())
     }
 
     /// Return the canonical raw payload bytes for the v1 Merkle

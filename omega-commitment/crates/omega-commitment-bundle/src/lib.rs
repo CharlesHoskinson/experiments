@@ -1,10 +1,10 @@
 //! omega-commitment-bundle: assembles the canonical Ω-Commitment tuple
-//! `(blake2b_bundle_root, sha3_bundle_root)` from the seven sub-tree
+//! `(blake3_bundle_root, sha3_bundle_root)` from the seven sub-tree
 //! commitments per the dual-hash decision (2026-05-01).
 //!
 //! As of the 2026-05-03 audit reframing, the SHA3 bundle root is a
-//! drift-detection signal computed over the same v1 Blake2b leaf
-//! hashes — NOT a binding-agility hedge against a Blake2b break.
+//! drift-detection signal computed over the same v1 Blake3 leaf
+//! hashes — NOT a binding-agility hedge against a Blake3 break.
 //! See `bundle::verify` and the module docs in `bundle.rs` for the
 //! per-sub-tree `item_count` check that closes A1/F003. The truly-
 //! independent SHA3 tree (separate per-leaf SHA3 hashing) is tracked
@@ -65,7 +65,7 @@ pub enum BundleError {
     },
 
     /// Verification mismatch between a published bundle and the
-    /// re-computed bundle. `field` is one of `blake2b_bundle_root`,
+    /// re-computed bundle. `field` is one of `blake3_bundle_root`,
     /// `sha3_bundle_root`, `schema_version`, `sub_trees.len`, or a
     /// per-sub-tree label (e.g. `item_count[utxo]`).
     #[error(

@@ -56,8 +56,8 @@ fn cmd_assemble(input_dir: PathBuf, output: PathBuf) -> anyhow::Result<()> {
     let bundle = assemble(&input_dir)?;
     fs::write(&output, serde_json::to_string_pretty(&bundle)?)?;
     println!(
-        "ok: assembled bundle blake2b={} sha3={}",
-        hex::encode(bundle.blake2b_bundle_root),
+        "ok: assembled bundle blake3={} sha3={}",
+        hex::encode(bundle.blake3_bundle_root),
         hex::encode(bundle.sha3_bundle_root)
     );
     Ok(())
@@ -73,8 +73,8 @@ fn cmd_verify(bundle_path: PathBuf, input_dir: PathBuf) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("cannot resolve input-dir {}: {}", input_dir.display(), e))?;
     verify(&bundle, &input_dir)?;
     println!(
-        "ok: bundle verifies blake2b={} sha3={}",
-        hex::encode(bundle.blake2b_bundle_root),
+        "ok: bundle verifies blake3={} sha3={}",
+        hex::encode(bundle.blake3_bundle_root),
         hex::encode(bundle.sha3_bundle_root)
     );
     Ok(())

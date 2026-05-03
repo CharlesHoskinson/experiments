@@ -8,7 +8,7 @@
 //!   (datum_option_tag: u8) || (datum_payload: variable) ||
 //!   (script_ref_tag: u8) || (script_ref_payload: variable)
 //!
-//! The leaf is then hashed with Blake2b-256 to produce the leaf hash.
+//! The leaf is then hashed with Blake3-256 to produce the leaf hash.
 //!
 //! ## Address bytes (CIP-19)
 //!
@@ -39,7 +39,7 @@
 //!
 //! Followed by `u32` BE length and the raw script bytes.
 
-use crate::hash::{blake2b_256, Hash};
+use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -190,7 +190,7 @@ impl Utxo {
         Ok(out)
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
     /// canonical encoding.
     ///
     /// **Deprecated for production use.** New code should call
@@ -201,11 +201,11 @@ impl Utxo {
     /// for tests, CLIs, and witness paths that have not yet been
     /// migrated to the v1 builder.
     pub fn leaf_hash(&self) -> Result<Hash, LeafError> {
-        Ok(blake2b_256(&self.encode()?))
+        Ok(blake3_256(&self.encode()?))
     }
 
     /// Return the canonical raw payload bytes that the v1 Merkle
-    /// builder consumes. The v1 builder calls `leaf_hash_v1` on this
+    /// builder consumes. The v1 builder calls `leaf_hash_v2` on this
     /// payload; do NOT pre-hash here.
     pub fn commit_to_subtree(&self) -> Result<Vec<u8>, LeafError> {
         self.encode()

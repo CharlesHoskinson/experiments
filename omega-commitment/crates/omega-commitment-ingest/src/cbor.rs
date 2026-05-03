@@ -58,7 +58,7 @@ pub fn read_array_len<'b>(d: &mut Decoder<'b>) -> Result<usize> {
     Ok(len as usize)
 }
 
-/// Read a 28-byte fixed-length byte string (Cardano Blake2b-224 hash).
+/// Read a 28-byte fixed-length byte string (Cardano Blake3-224 hash).
 pub fn read_28_bytes<'b>(d: &mut Decoder<'b>) -> Result<[u8; 28]> {
     let bytes = d
         .bytes()

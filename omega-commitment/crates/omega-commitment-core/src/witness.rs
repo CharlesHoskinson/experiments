@@ -1,6 +1,6 @@
 //! Inclusion witness for a UTXO leaf in the Merkle tree.
 
-use crate::hash::{blake2b_256, Hash};
+use crate::hash::{blake3_256, Hash};
 use crate::tree::MerkleTree;
 use serde::{Deserialize, Serialize};
 
@@ -84,7 +84,7 @@ impl InclusionWitness {
                 buf[..32].copy_from_slice(sib);
                 buf[32..].copy_from_slice(&current);
             }
-            current = blake2b_256(&buf);
+            current = blake3_256(&buf);
             idx /= 2;
         }
         current == root
@@ -97,7 +97,7 @@ mod tests {
 
     fn build_tree_of(n: usize) -> (MerkleTree, Vec<Hash>) {
         let leaves: Vec<Hash> = (0..n)
-            .map(|i| blake2b_256(&(i as u32).to_be_bytes()))
+            .map(|i| blake3_256(&(i as u32).to_be_bytes()))
             .collect();
         let tree = MerkleTree::build(leaves.clone());
         (tree, leaves)
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn witness_for_absent_leaf_is_none() {
         let (tree, _) = build_tree_of(4);
-        let bogus = blake2b_256(b"not in tree");
+        let bogus = blake3_256(b"not in tree");
         assert!(InclusionWitness::build(&tree, bogus).is_none());
     }
 
@@ -134,7 +134,7 @@ mod tests {
     fn wrong_root_rejects() {
         let (tree, leaves) = build_tree_of(4);
         let w = InclusionWitness::build(&tree, leaves[0]).unwrap();
-        let bad_root = blake2b_256(b"bad");
+        let bad_root = blake3_256(b"bad");
         assert!(!w.verify(bad_root));
     }
 
@@ -151,7 +151,7 @@ mod tests {
     fn malformed_witness_rejected() {
         // depth=0 with leaf_index=5 is impossible (single-leaf tree, only index 0)
         let bad = InclusionWitness {
-            leaf: blake2b_256(b"any"),
+            leaf: blake3_256(b"any"),
             leaf_index: 5,
             siblings: vec![],
         };
@@ -159,7 +159,7 @@ mod tests {
 
         // depth=2 with leaf_index=4 is impossible (only indices 0..3 valid for 4 leaves)
         let bad2 = InclusionWitness {
-            leaf: blake2b_256(b"any"),
+            leaf: blake3_256(b"any"),
             leaf_index: 4,
             siblings: vec![[0u8; 32], [0u8; 32]],
         };
@@ -167,7 +167,7 @@ mod tests {
 
         // Excessively deep witness
         let bad3 = InclusionWitness {
-            leaf: blake2b_256(b"any"),
+            leaf: blake3_256(b"any"),
             leaf_index: 0,
             siblings: vec![[0u8; 32]; 32],
         };

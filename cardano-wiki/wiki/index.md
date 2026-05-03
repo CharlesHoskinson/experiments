@@ -30,6 +30,9 @@
 - [[ledger-state-json-layout]] — JSON paths + verified entity counts for stake/governance sub-trees _(ingested 2026-05-03)_
 - [[lsq-getutxowhole-pipeline]] — `omega-utxo-snapshot` binary + why cardano-cli `--whole-utxo` fails on mainnet _(ingested 2026-05-03)_
 
+### Testnet Demo (T1 + T6 prototype)
+- [[omega-testnet-e2e-plan]] — End-to-end preview-testnet flow: snapshot → ingest → claim_utxo → prototype Omega node + Plonky3 verifier; what to fork, what to depend on _(2026-05-03)_
+
 ### Repositories
 - [[cardano-repos]] — Key code across IntersectMBO, IOG, Foundation, scaling
 

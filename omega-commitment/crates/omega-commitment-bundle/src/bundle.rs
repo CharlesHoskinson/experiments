@@ -1,25 +1,25 @@
 //! Bundle assembly + verification.
 //!
 //! Reads seven sub-tree input JSON files from a directory, recomputes
-//! each sub-tree's `(blake2b_root, sha3_root)`, and aggregates into
-//! the canonical Ω-Commitment tuple `(blake2b_bundle_root, sha3_bundle_root)`.
+//! each sub-tree's `(blake3_root, sha3_root)`, and aggregates into
+//! the canonical Ω-Commitment tuple `(blake3_bundle_root, sha3_bundle_root)`.
 //!
 //! ## SHA3 bundle root: drift detection, not binding-agility hedge
 //!
-//! Both per-sub-tree roots are built from the same v1 Blake2b leaf
+//! Both per-sub-tree roots are built from the same v1 Blake3 leaf
 //! hashes. The SHA3 root is therefore a drift-detection signal over
-//! the seven Blake2b roots — divergence between the two bundle roots
+//! the seven Blake3 roots — divergence between the two bundle roots
 //! means the aggregation step disagreed with itself, not that one of
 //! the underlying hash functions broke. A truly-independent SHA3 tree
 //! (separate per-leaf hashing under SHA3) is tracked as a v2.0
 //! follow-up; the audit reframing (A1/F004, 2026-05-03) makes the
 //! current SHA3 status explicit so consumers do not over-rely on it
-//! as a Blake2b-break hedge.
+//! as a Blake3-break hedge.
 
 use crate::recompute::recompute;
 use crate::sub_tree_id::ALL;
 use crate::BundleError;
-use omega_commitment_core::hash::{blake2b_256, sha3_256, Hash};
+use omega_commitment_core::hash::{blake3_256, sha3_256, Hash};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -30,7 +30,7 @@ pub struct SubTreeRecord {
     /// Stable kebab-case label, e.g. "utxo", "tx-index", "token-policy".
     pub sub_tree: String,
     #[serde(with = "hex::serde")]
-    pub blake2b_root: Hash,
+    pub blake3_root: Hash,
     #[serde(with = "hex::serde")]
     pub sha3_root: Hash,
     #[serde(with = "hex::serde")]
@@ -44,7 +44,7 @@ pub struct SubTreeRecord {
 pub struct BundleRecord {
     pub schema_version: u32,
     #[serde(with = "hex::serde")]
-    pub blake2b_bundle_root: Hash,
+    pub blake3_bundle_root: Hash,
     #[serde(with = "hex::serde")]
     pub sha3_bundle_root: Hash,
     /// Sub-trees in canonical order (matches `sub_tree_id::ALL`).
@@ -67,7 +67,7 @@ pub fn assemble(input_dir: &Path) -> Result<BundleRecord, BundleError> {
         })?;
         sub_trees.push(SubTreeRecord {
             sub_tree: st.label().to_string(),
-            blake2b_root: roots.blake2b_root,
+            blake3_root: roots.blake3_root,
             sha3_root: roots.sha3_root,
             input_digest: roots.input_digest,
             leaf_count: roots.leaf_count,
@@ -75,11 +75,11 @@ pub fn assemble(input_dir: &Path) -> Result<BundleRecord, BundleError> {
             item_count: roots.item_count,
         });
     }
-    let blake2b_bundle_root = aggregate_blake2b(&sub_trees);
+    let blake3_bundle_root = aggregate_blake3(&sub_trees);
     let sha3_bundle_root = aggregate_sha3(&sub_trees);
     Ok(BundleRecord {
         schema_version: BUNDLE_SCHEMA_VERSION,
-        blake2b_bundle_root,
+        blake3_bundle_root,
         sha3_bundle_root,
         sub_trees,
     })
@@ -99,11 +99,11 @@ pub fn assemble(input_dir: &Path) -> Result<BundleRecord, BundleError> {
 /// (audit finding A1/F003, closed in Batch 1).
 pub fn verify(bundle: &BundleRecord, input_dir: &Path) -> Result<(), BundleError> {
     let fresh = assemble(input_dir)?;
-    if fresh.blake2b_bundle_root != bundle.blake2b_bundle_root {
+    if fresh.blake3_bundle_root != bundle.blake3_bundle_root {
         return Err(BundleError::Mismatch {
-            field: "blake2b_bundle_root".to_string(),
-            published: hex::encode(bundle.blake2b_bundle_root),
-            recomputed: hex::encode(fresh.blake2b_bundle_root),
+            field: "blake3_bundle_root".to_string(),
+            published: hex::encode(bundle.blake3_bundle_root),
+            recomputed: hex::encode(fresh.blake3_bundle_root),
         });
     }
     if fresh.sha3_bundle_root != bundle.sha3_bundle_root {
@@ -148,12 +148,12 @@ pub fn verify(bundle: &BundleRecord, input_dir: &Path) -> Result<(), BundleError
     Ok(())
 }
 
-fn aggregate_blake2b(sub_trees: &[SubTreeRecord]) -> Hash {
+fn aggregate_blake3(sub_trees: &[SubTreeRecord]) -> Hash {
     let mut buf = Vec::with_capacity(7 * 32);
     for r in sub_trees {
-        buf.extend_from_slice(&r.blake2b_root);
+        buf.extend_from_slice(&r.blake3_root);
     }
-    blake2b_256(&buf)
+    blake3_256(&buf)
 }
 
 fn aggregate_sha3(sub_trees: &[SubTreeRecord]) -> Hash {
@@ -214,9 +214,9 @@ mod tests {
         let bundle = assemble(dir.path()).unwrap();
         assert_eq!(bundle.schema_version, BUNDLE_SCHEMA_VERSION);
         assert_eq!(bundle.sub_trees.len(), 7);
-        assert_ne!(bundle.blake2b_bundle_root, [0u8; 32]);
+        assert_ne!(bundle.blake3_bundle_root, [0u8; 32]);
         assert_ne!(bundle.sha3_bundle_root, [0u8; 32]);
-        assert_ne!(bundle.blake2b_bundle_root, bundle.sha3_bundle_root);
+        assert_ne!(bundle.blake3_bundle_root, bundle.sha3_bundle_root);
     }
 
     #[test]
@@ -267,15 +267,15 @@ mod tests {
     }
 
     #[test]
-    fn verify_detects_blake2b_root_tamper() {
+    fn verify_detects_blake3_root_tamper() {
         let dir = tempfile::tempdir().unwrap();
         write_minimal_inputs(dir.path());
         let mut bundle = assemble(dir.path()).unwrap();
-        bundle.blake2b_bundle_root[0] ^= 0x01;
+        bundle.blake3_bundle_root[0] ^= 0x01;
         let result = verify(&bundle, dir.path());
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("blake2b_bundle_root"), "got: {msg}");
+        assert!(msg.contains("blake3_bundle_root"), "got: {msg}");
         assert!(msg.contains("mismatch"), "got: {msg}");
     }
 

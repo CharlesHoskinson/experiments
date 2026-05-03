@@ -44,9 +44,9 @@ fn assemble_and_verify_against_real_fixtures() {
     // Structural assertions.
     assert_eq!(bundle.schema_version, 1);
     assert_eq!(bundle.sub_trees.len(), 7);
-    assert_ne!(bundle.blake2b_bundle_root, [0u8; 32]);
+    assert_ne!(bundle.blake3_bundle_root, [0u8; 32]);
     assert_ne!(bundle.sha3_bundle_root, [0u8; 32]);
-    assert_ne!(bundle.blake2b_bundle_root, bundle.sha3_bundle_root);
+    assert_ne!(bundle.blake3_bundle_root, bundle.sha3_bundle_root);
 
     // Per-sub-tree assertions: each sub-tree commits 8 items
     // (every fixture in this repo has 8 entries except utxo which has 3).
@@ -72,14 +72,14 @@ fn assemble_and_verify_against_real_fixtures() {
     let item_counts: Vec<usize> = bundle.sub_trees.iter().map(|s| s.item_count).collect();
     assert_eq!(item_counts, vec![3, 8, 8, 8, 8, 8, 8]);
 
-    // Each sub-tree's blake2b and sha3 roots differ.
+    // Each sub-tree's blake3 and sha3 roots differ.
     for s in &bundle.sub_trees {
         assert_ne!(
-            s.blake2b_root, s.sha3_root,
-            "sub_tree {} has equal blake2b and sha3 roots",
+            s.blake3_root, s.sha3_root,
+            "sub_tree {} has equal blake3 and sha3 roots",
             s.sub_tree
         );
-        assert_ne!(s.blake2b_root, [0u8; 32]);
+        assert_ne!(s.blake3_root, [0u8; 32]);
         assert_ne!(s.sha3_root, [0u8; 32]);
     }
 
@@ -100,7 +100,7 @@ fn assemble_is_deterministic_across_runs() {
     populate_input_dir(dir2.path());
     let b1 = assemble(dir1.path()).unwrap();
     let b2 = assemble(dir2.path()).unwrap();
-    assert_eq!(b1.blake2b_bundle_root, b2.blake2b_bundle_root);
+    assert_eq!(b1.blake3_bundle_root, b2.blake3_bundle_root);
     assert_eq!(b1.sha3_bundle_root, b2.sha3_bundle_root);
 }
 

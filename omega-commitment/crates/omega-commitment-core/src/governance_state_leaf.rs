@@ -3,7 +3,7 @@
 //! Governance facts are heterogeneous (treasury balance, CC seats,
 //! gov-action records, AccountState pots). Each fact carries a one-byte
 //! `kind` discriminant followed by a kind-specific payload, and the
-//! whole pre-image is hashed with Blake2b-256 to produce the leaf hash
+//! whole pre-image is hashed with Blake3-256 to produce the leaf hash
 //! that goes into the Merkle tree. This sub-tree powers
 //! `claim_governance` transactions: users port over treasury, CC seat,
 //! and governance-action history.
@@ -39,7 +39,7 @@
 //!
 //! - Future variants reserved.
 
-use crate::hash::{blake2b_256, Hash};
+use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -145,12 +145,12 @@ impl GovernanceFact {
         }
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
     /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
     /// canonical payload that the domain-separated Merkle builder
     /// consumes.
     pub fn leaf_hash(&self) -> Hash {
-        blake2b_256(&self.encode())
+        blake3_256(&self.encode())
     }
 
     /// Return the canonical raw payload bytes for the v1 Merkle

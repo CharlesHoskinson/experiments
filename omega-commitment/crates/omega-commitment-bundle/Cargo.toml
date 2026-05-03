@@ -1,6 +1,6 @@
 [package]
 name = "omega-commitment-bundle"
-version = "0.9.1"
+version = "0.10.0-rc1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -21,7 +21,7 @@ serde_json.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 anyhow = "1.0"
-blake2.workspace = true
+blake3.workspace = true
 sha3.workspace = true
 
 [dev-dependencies]

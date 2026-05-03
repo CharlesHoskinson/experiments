@@ -3,7 +3,7 @@
 //!
 //! These hashes are pinned constants under the v1 domain-separated
 //! Merkle construction (`MerkleTree::build_v1` with the
-//! `omega:v1:leaf` / `omega:v1:node` tags). If a code change causes
+//! `omega:v2:leaf` / `omega:v2:node` tags). If a code change causes
 //! any of them to drift, the test fails — and that's the point. A
 //! failure here means either:
 //!   - a bug was introduced in encoding logic (revert), or
@@ -71,7 +71,7 @@ fn golden_utxo_root() {
     // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "91616efc4abd705058021cd0a7dba3ac8938a50a60d679bb6e43b82e29e899a9",
+        "8cb453aac940d54c315a29f8770fe3d1b82d9092b5215c16473b0fee63595244",
         "UTXO sub-tree root drifted"
     );
 }
@@ -86,7 +86,7 @@ fn golden_header_root() {
     // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "59e41dbb590b0dc23106b784f635e521a0d50c207063ec2a36c9de4c9729315e",
+        "35a1da1aee850d823799c757e5636f1403202d4656239d9b270c698a4e604879",
         "Header sub-tree root drifted"
     );
 }
@@ -101,7 +101,7 @@ fn golden_tx_index_root() {
     // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "c1804b722ce6b0f8e77a391ae401c239f9eaef56812f2840a10b86fc75b86b39",
+        "ac65e33029d4ed81cd6ddf5cd401fd66c9366e2c5d702d044cc92b7cef5cc7cd",
         "Tx-index sub-tree root drifted"
     );
 }
@@ -116,7 +116,7 @@ fn golden_token_policy_root() {
     // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "620ed0033e184da339bc51cad03cdb781735106992ffacf74cef1d03b58add27",
+        "4d85aab3ce95d7d98e6d71e89eea90f5ff65944b5394b8aa191454db45fcc6a5",
         "Token-policy sub-tree root drifted"
     );
 }
@@ -131,7 +131,7 @@ fn golden_script_root() {
     // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "0b74abb2c4e04e79906172e2919dd92370f3cf614d25b1a85ed313791ff758bb",
+        "ef313c61da9a406b22ac4e7afd70d701ce853498503bd1755eafca0581f9369f",
         "Script-registry sub-tree root drifted"
     );
 }
@@ -150,7 +150,7 @@ fn golden_stake_root() {
     // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "e2451a79d8fda2c5d15edc689980452a05a2fae6234144e198a3b77d1cec2e2a",
+        "80cb39bd34a9c2e7adc79cc17124223b34b901cf2ee2ed68a86f5a0acdecb044",
         "Stake-state sub-tree root drifted"
     );
 }
@@ -169,7 +169,7 @@ fn golden_governance_root() {
     // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "c83880ddeb7f43744ccd8453a367502a32aa7bf07187f632100908316871a1e4",
+        "40d345ddc569a6009825e9517696cfd5c6b8c532c562d61113446f53cf3bb1cd",
         "Governance-state sub-tree root drifted"
     );
 }
@@ -180,7 +180,7 @@ fn golden_utxo_witness_round_trip() {
     // path because the v1 inclusion-witness verifier is part of the
     // v1.0 verifier-circuit work (track T6) and is not yet shipped.
     // Once `witness::InclusionWitness::verify` is migrated to use
-    // `node_hash_v1`, this test should switch to the v1 builder.
+    // `node_hash_v2`, this test should switch to the v1 builder.
     use omega_commitment_core::witness::InclusionWitness;
 
     let f: UtxoIn = serde_json::from_str(&read_fixture("utxo_set_small.json")).unwrap();

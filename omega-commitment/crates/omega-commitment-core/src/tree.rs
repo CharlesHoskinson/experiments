@@ -1,10 +1,10 @@
 //! Plonky3-friendly binary Merkle tree.
 //!
 //! The v1 construction (`build_v1`) computes:
-//!   - leaves via `leaf_hash_v1(sub_tree_id, canonical_index, payload)`
+//!   - leaves via `leaf_hash_v2(sub_tree_id, canonical_index, payload)`
 //!     (see `DOMAIN_LEAF`),
-//!   - internal nodes via `node_hash_v1(left, right)` (see `DOMAIN_NODE`),
-//!   - padding leaves via `leaf_hash_v1(sub_tree_id, EMPTY_INDEX_SENTINEL,
+//!   - internal nodes via `node_hash_v2(left, right)` (see `DOMAIN_NODE`),
+//!   - padding leaves via `leaf_hash_v2(sub_tree_id, EMPTY_INDEX_SENTINEL,
 //!     &[])` so that zero-padding is no longer a valid membership target.
 //!
 //! Properties:
@@ -15,23 +15,21 @@
 //!     in a sub-tree.
 //!   - The tree is padded to the next power of two with the
 //!     domain-separated empty-leaf hash (NOT raw zero bytes).
-//!   - Internal nodes always carry the `omega:v1:node` tag; leaves
-//!     always carry `omega:v1:leaf`. The two domains never collide.
+//!   - Internal nodes always carry the `omega:v2:node` tag; leaves
+//!     always carry `omega:v2:leaf`. The two domains never collide.
 //!
 //! The legacy `build(Vec<Hash>)` path is preserved as a deprecated
 //! compatibility alias for tests and CLIs that pre-hash. It does NOT
 //! apply domain separation and MUST NOT be used by new code paths
 //! that need the v1 soundness guarantees.
 
-use crate::hash::{blake2b_256, Hash};
-use blake2::digest::consts::U32;
-use blake2::{Blake2b, Digest as Blake2Digest};
+use crate::hash::{blake3_256, Hash};
 use thiserror::Error;
 
 /// Domain tag bound into every v1 leaf preimage.
-pub const DOMAIN_LEAF: &[u8] = b"omega:v1:leaf";
+pub const DOMAIN_LEAF: &[u8] = b"omega:v2:leaf";
 /// Domain tag bound into every v1 internal-node preimage.
-pub const DOMAIN_NODE: &[u8] = b"omega:v1:node";
+pub const DOMAIN_NODE: &[u8] = b"omega:v2:node";
 
 /// Sentinel index used when synthesising a domain-separated empty leaf
 /// for power-of-two padding. A verifier MUST reject any inclusion proof
@@ -57,31 +55,31 @@ pub enum BuildError {
 /// Domain-separated leaf hash.
 ///
 /// `H(DOMAIN_LEAF || sub_tree_id || canonical_index_be || payload_len_be
-///    || payload)` using Blake2b-256.
+///    || payload)` using Blake3-256.
 ///
 /// Binding the `(sub_tree_id, canonical_index)` pair into the preimage
 /// closes the audit findings A1/F001 (leaves did not bind sub_tree_id
 /// or canonical leaf_index) and A1/F002 (leaf and internal-node hashes
 /// shared an untagged domain).
-pub fn leaf_hash_v1(sub_tree_id: u8, canonical_index: u64, payload: &[u8]) -> Hash {
-    let mut h = Blake2b::<U32>::new();
-    h.update(DOMAIN_LEAF);
-    h.update([sub_tree_id]);
-    h.update(canonical_index.to_be_bytes());
-    h.update((payload.len() as u64).to_be_bytes());
-    h.update(payload);
-    h.finalize().into()
+pub fn leaf_hash_v2(sub_tree_id: u8, canonical_index: u64, payload: &[u8]) -> Hash {
+    let mut buf = Vec::with_capacity(DOMAIN_LEAF.len() + 1 + 8 + 8 + payload.len());
+    buf.extend_from_slice(DOMAIN_LEAF);
+    buf.push(sub_tree_id);
+    buf.extend_from_slice(&canonical_index.to_be_bytes());
+    buf.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+    buf.extend_from_slice(payload);
+    blake3_256(&buf)
 }
 
 /// Domain-separated internal-node hash.
 ///
-/// `H(DOMAIN_NODE || left || right)` using Blake2b-256.
-pub fn node_hash_v1(left: &Hash, right: &Hash) -> Hash {
-    let mut h = Blake2b::<U32>::new();
-    h.update(DOMAIN_NODE);
-    h.update(left);
-    h.update(right);
-    h.finalize().into()
+/// `H(DOMAIN_NODE || left || right)` using Blake3-256.
+pub fn node_hash_v2(left: &Hash, right: &Hash) -> Hash {
+    let mut buf = Vec::with_capacity(DOMAIN_NODE.len() + 64);
+    buf.extend_from_slice(DOMAIN_NODE);
+    buf.extend_from_slice(left);
+    buf.extend_from_slice(right);
+    blake3_256(&buf)
 }
 
 #[derive(Debug, Clone)]
@@ -96,7 +94,7 @@ impl MerkleTree {
     /// `payloads` is the raw canonical-encoded byte representation of
     /// each leaf (NOT pre-hashed). Payloads are sorted by raw bytes for
     /// determinism, then bound to their sorted index via
-    /// `leaf_hash_v1`. Duplicate payloads are rejected.
+    /// `leaf_hash_v2`. Duplicate payloads are rejected.
     pub fn build_v1(sub_tree_id: u8, mut payloads: Vec<Vec<u8>>) -> Result<Self, BuildError> {
         payloads.sort();
         // Reject duplicate canonical keys: in every sub-tree the unsorted
@@ -115,12 +113,12 @@ impl MerkleTree {
         let mut leaves: Vec<Hash> = payloads
             .iter()
             .enumerate()
-            .map(|(i, p)| leaf_hash_v1(sub_tree_id, i as u64, p))
+            .map(|(i, p)| leaf_hash_v2(sub_tree_id, i as u64, p))
             .collect();
         // Pad to next power of two with the domain-separated empty leaf.
         let target = leaves.len().max(1).next_power_of_two();
         while leaves.len() < target {
-            leaves.push(leaf_hash_v1(sub_tree_id, EMPTY_INDEX_SENTINEL, &[]));
+            leaves.push(leaf_hash_v2(sub_tree_id, EMPTY_INDEX_SENTINEL, &[]));
         }
         Ok(Self::build_layers_v1(leaves))
     }
@@ -131,7 +129,7 @@ impl MerkleTree {
             let prev = layers.last().expect("non-empty");
             let mut next = Vec::with_capacity(prev.len() / 2);
             for chunk in prev.chunks(2) {
-                next.push(node_hash_v1(&chunk[0], &chunk[1]));
+                next.push(node_hash_v2(&chunk[0], &chunk[1]));
             }
             layers.push(next);
         }
@@ -146,8 +144,8 @@ impl MerkleTree {
     /// **Compatibility-only.** Retained for tests and CLI paths that
     /// already pre-hash their leaves. Does NOT apply v1 domain
     /// separation and pads with `ZERO_HASH`. New production code MUST
-    /// use [`Self::build_v1`] to obtain the `omega:v1:leaf` /
-    /// `omega:v1:node` soundness guarantees; the inclusion-witness
+    /// use [`Self::build_v1`] to obtain the `omega:v2:leaf` /
+    /// `omega:v2:node` soundness guarantees; the inclusion-witness
     /// verifier (`witness::InclusionWitness::verify`) will be migrated
     /// to v1 as part of the v1.0 verifier-circuit work (track T6).
     ///
@@ -176,7 +174,7 @@ impl MerkleTree {
                 let mut buf = [0u8; 64];
                 buf[..32].copy_from_slice(&chunk[0]);
                 buf[32..].copy_from_slice(&chunk[1]);
-                next.push(blake2b_256(&buf));
+                next.push(blake3_256(&buf));
             }
             layers.push(next);
         }
@@ -228,7 +226,7 @@ mod tests {
 
     #[test]
     fn single_leaf_tree() {
-        let leaf = blake2b_256(b"a");
+        let leaf = blake3_256(b"a");
         let t = MerkleTree::build(vec![leaf]);
         assert_eq!(t.leaf_count(), 1);
         assert_eq!(t.depth(), 0);
@@ -237,8 +235,8 @@ mod tests {
 
     #[test]
     fn two_leaves_tree() {
-        let a = blake2b_256(b"a");
-        let b = blake2b_256(b"b");
+        let a = blake3_256(b"a");
+        let b = blake3_256(b"b");
         let t = MerkleTree::build(vec![a, b]);
         assert_eq!(t.leaf_count(), 2);
         assert_eq!(t.depth(), 1);
@@ -247,14 +245,14 @@ mod tests {
         let mut buf = [0u8; 64];
         buf[..32].copy_from_slice(&lo);
         buf[32..].copy_from_slice(&hi);
-        assert_eq!(t.root(), blake2b_256(&buf));
+        assert_eq!(t.root(), blake3_256(&buf));
     }
 
     #[test]
     fn three_leaves_pads_to_four() {
-        let a = blake2b_256(b"a");
-        let b = blake2b_256(b"b");
-        let c = blake2b_256(b"c");
+        let a = blake3_256(b"a");
+        let b = blake3_256(b"b");
+        let c = blake3_256(b"c");
         let t = MerkleTree::build(vec![a, b, c]);
         assert_eq!(t.leaf_count(), 4);
         assert_eq!(t.depth(), 2);
@@ -264,7 +262,7 @@ mod tests {
 
     #[test]
     fn root_is_deterministic_under_input_permutation() {
-        let leaves: Vec<Hash> = (0..8u8).map(|i| blake2b_256(&[i])).collect();
+        let leaves: Vec<Hash> = (0..8u8).map(|i| blake3_256(&[i])).collect();
         let t1 = MerkleTree::build(leaves.clone());
         let mut shuffled = leaves;
         shuffled.reverse();
@@ -274,20 +272,20 @@ mod tests {
 
     #[test]
     fn deep_tree_256_leaves() {
-        let leaves: Vec<Hash> = (0..256u32).map(|i| blake2b_256(&i.to_be_bytes())).collect();
+        let leaves: Vec<Hash> = (0..256u32).map(|i| blake3_256(&i.to_be_bytes())).collect();
         let t = MerkleTree::build(leaves);
         assert_eq!(t.leaf_count(), 256);
         assert_eq!(t.depth(), 8);
         // Root is non-zero (overwhelmingly likely).
         assert_ne!(t.root(), ZERO_HASH);
         // Root is reproducible.
-        let leaves2: Vec<Hash> = (0..256u32).map(|i| blake2b_256(&i.to_be_bytes())).collect();
+        let leaves2: Vec<Hash> = (0..256u32).map(|i| blake3_256(&i.to_be_bytes())).collect();
         assert_eq!(t.root(), MerkleTree::build(leaves2).root());
     }
 
     #[test]
     fn duplicate_leaves_are_not_deduplicated() {
-        let a = blake2b_256(b"a");
+        let a = blake3_256(b"a");
         // Build with one copy.
         let t1 = MerkleTree::build(vec![a]);
         // Build with two copies of the same leaf.
@@ -303,7 +301,7 @@ mod tests {
         // Pin the structural shape for a known input. The integration
         // tests across all 3 sub-trees catch root-bytes drift; this test
         // catches structural changes (depth, leaf_count).
-        let leaves: Vec<Hash> = (0..16u8).map(|i| blake2b_256(&[i])).collect();
+        let leaves: Vec<Hash> = (0..16u8).map(|i| blake3_256(&[i])).collect();
         let t = MerkleTree::build(leaves);
         assert_eq!(t.depth(), 4);
         assert_eq!(t.leaf_count(), 16);
@@ -315,33 +313,33 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
-    fn test_leaf_hash_v1_differs_from_raw_blake2b_of_payload() {
+    fn test_leaf_hash_v2_differs_from_raw_blake3_of_payload() {
         // A v1 leaf binds the domain tag, sub_tree_id, canonical_index,
-        // and length prefix into the preimage. A raw Blake2b over just
+        // and length prefix into the preimage. A raw Blake3 over just
         // the payload MUST NOT collide with the domain-separated hash.
         let payload = b"some-canonical-leaf-payload".to_vec();
-        let domain_separated = leaf_hash_v1(1, 0, &payload);
-        let raw = blake2b_256(&payload);
+        let domain_separated = leaf_hash_v2(1, 0, &payload);
+        let raw = blake3_256(&payload);
         assert_ne!(
             domain_separated, raw,
-            "v1 leaf hash collided with raw Blake2b — domain separation lost"
+            "v1 leaf hash collided with raw Blake3 — domain separation lost"
         );
     }
 
     #[test]
-    fn test_leaf_hash_v1_differs_from_node_hash_of_same_input_pair() {
+    fn test_leaf_hash_v2_differs_from_node_hash_of_same_input_pair() {
         // The leaf and node hashes carry distinct domain tags. Even if
         // an attacker could supply an internal-node concatenation as a
         // 64-byte "payload" of a leaf, the domain tags must keep the
         // outputs apart so that a node preimage cannot be reinterpreted
         // as a membership leaf.
-        let left = blake2b_256(b"left");
-        let right = blake2b_256(b"right");
+        let left = blake3_256(b"left");
+        let right = blake3_256(b"right");
         let mut concat = Vec::with_capacity(64);
         concat.extend_from_slice(&left);
         concat.extend_from_slice(&right);
-        let leaf = leaf_hash_v1(1, 0, &concat);
-        let node = node_hash_v1(&left, &right);
+        let leaf = leaf_hash_v2(1, 0, &concat);
+        let node = node_hash_v2(&left, &right);
         assert_ne!(
             leaf, node,
             "leaf and node hashes collided — second-preimage swap is open"
@@ -354,8 +352,8 @@ mod tests {
         // carrying an empty payload at canonical index 0 (or any
         // non-sentinel index) MUST hash to a different value, so
         // padding cannot be presented as a valid membership target.
-        let pad_leaf = leaf_hash_v1(1, EMPTY_INDEX_SENTINEL, &[]);
-        let zero_payload_at_index_0 = leaf_hash_v1(1, 0, &[]);
+        let pad_leaf = leaf_hash_v2(1, EMPTY_INDEX_SENTINEL, &[]);
+        let zero_payload_at_index_0 = leaf_hash_v2(1, 0, &[]);
         assert_ne!(
             pad_leaf, zero_payload_at_index_0,
             "padding sentinel collided with index-0 empty leaf"

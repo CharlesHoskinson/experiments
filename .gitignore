@@ -1,0 +1,4 @@
+
+# Spike artifacts (do not commit upstream clones or build outputs)
+var/upstream/
+var/snapshots/

@@ -2,7 +2,7 @@
 //!
 //! For each of the seven Ω-Commitment sub-trees, this file pins:
 //!   1. the canonical encoded bytes of one example leaf, and
-//!   2. the v1 domain-separated leaf hash (`leaf_hash_v1(SUB_TREE_ID, 0, &payload)`)
+//!   2. the v1 domain-separated leaf hash (`leaf_hash_v2(SUB_TREE_ID, 0, &payload)`)
 //!      computed against those exact bytes.
 //!
 //! The seven main cases are the smallest possible "first leaf" for each
@@ -17,7 +17,7 @@
 //! has drifted: a different encoder that happens to produce a different
 //! payload could collide on the same hash for a different reason. Pinning
 //! the encoded bytes locks the encoder; pinning the hash locks the v1
-//! domain tag (`omega:v1:leaf` || sub_tree_id || canonical_index ||
+//! domain tag (`omega:v2:leaf` || sub_tree_id || canonical_index ||
 //! payload_len || payload). Failure of either assertion is a regression.
 //!
 //! ## Edge-case fixture corpus deferral (A4/F003)
@@ -44,7 +44,7 @@ use omega_commitment_core::{
     script_registry_leaf::ScriptEntry,
     stake_state_leaf::{DrepDelegation, StakeEntry},
     token_policy_leaf::TokenPolicy,
-    tree::{leaf_hash_v1, MerkleTree, EMPTY_INDEX_SENTINEL},
+    tree::{leaf_hash_v2, MerkleTree, EMPTY_INDEX_SENTINEL},
     tx_index_leaf::TxIndexEntry,
     utxo_leaf::{DatumOption, Utxo},
     SUB_TREE_ID_GOVERNANCE, SUB_TREE_ID_HEADER, SUB_TREE_ID_SCRIPT, SUB_TREE_ID_STAKE,
@@ -77,7 +77,7 @@ as a v1.1 fixture-expansion task.
 fn golden_utxo_leaf() {
     let utxo = sample_utxo();
     let payload = utxo.commit_to_subtree().expect("encode utxo");
-    let hash = leaf_hash_v1(SUB_TREE_ID_UTXO, 0, &payload);
+    let hash = leaf_hash_v2(SUB_TREE_ID_UTXO, 0, &payload);
 
     assert_eq!(
         hex::encode(&payload),
@@ -86,7 +86,7 @@ fn golden_utxo_leaf() {
     );
     assert_eq!(
         hex::encode(hash),
-        "0be58afe1163514b9e992763983b18dfc1e1fa7ffae5d21d19229c5fddd78c49",
+        "374dfc378126879ad1932f7e76a8f700c7b3a8317ff2b57e77a00d7b902ec1f9",
         "UTXO leaf hash drifted under v1 domain tag (sub_tree_id=1, canonical_index=0)"
     );
 }
@@ -95,7 +95,7 @@ fn golden_utxo_leaf() {
 fn golden_header_leaf() {
     let header = sample_header();
     let payload = header.commit_to_subtree();
-    let hash = leaf_hash_v1(SUB_TREE_ID_HEADER, 0, &payload);
+    let hash = leaf_hash_v2(SUB_TREE_ID_HEADER, 0, &payload);
 
     assert_eq!(
         hex::encode(&payload),
@@ -104,7 +104,7 @@ fn golden_header_leaf() {
     );
     assert_eq!(
         hex::encode(hash),
-        "c065534b00b02248d89c5568b5e132a237dcceeba8b34182acfbc7a4b46638c8",
+        "bfc2cb4622f0547b193ce4037583092e67609e77d8d327c580fa54acab55bf34",
         "Header leaf hash drifted under v1 domain tag (sub_tree_id=2, canonical_index=0)"
     );
 }
@@ -113,7 +113,7 @@ fn golden_header_leaf() {
 fn golden_tx_index_leaf() {
     let entry = sample_tx_index();
     let payload = entry.commit_to_subtree();
-    let hash = leaf_hash_v1(SUB_TREE_ID_TX_INDEX, 0, &payload);
+    let hash = leaf_hash_v2(SUB_TREE_ID_TX_INDEX, 0, &payload);
 
     assert_eq!(
         hex::encode(&payload),
@@ -122,7 +122,7 @@ fn golden_tx_index_leaf() {
     );
     assert_eq!(
         hex::encode(hash),
-        "6520d5d63427865c8c94f679cfb876b18f1f2fb16abcf2b9125f06c26d0012ee",
+        "dc77fc6f46b708cf90e36b59b79d47ad7ccacc1aceb8066e4cdeed32bcf9c82c",
         "TxIndex leaf hash drifted under v1 domain tag (sub_tree_id=3, canonical_index=0)"
     );
 }
@@ -131,7 +131,7 @@ fn golden_tx_index_leaf() {
 fn golden_token_policy_leaf() {
     let policy = sample_token_policy();
     let payload = policy.commit_to_subtree();
-    let hash = leaf_hash_v1(SUB_TREE_ID_TOKEN_POLICY, 0, &payload);
+    let hash = leaf_hash_v2(SUB_TREE_ID_TOKEN_POLICY, 0, &payload);
 
     assert_eq!(
         hex::encode(&payload),
@@ -140,7 +140,7 @@ fn golden_token_policy_leaf() {
     );
     assert_eq!(
         hex::encode(hash),
-        "9c794d13b28dfd118933b32309853820663c96885256cc807148a9dac3cffe44",
+        "ca34d8906b7b478a7c24ba8c39bbd3472ecba7e007ffd5c644b4cdeba067e2bc",
         "TokenPolicy leaf hash drifted under v1 domain tag (sub_tree_id=4, canonical_index=0)"
     );
 }
@@ -149,7 +149,7 @@ fn golden_token_policy_leaf() {
 fn golden_script_leaf() {
     let script = sample_script();
     let payload = script.commit_to_subtree();
-    let hash = leaf_hash_v1(SUB_TREE_ID_SCRIPT, 0, &payload);
+    let hash = leaf_hash_v2(SUB_TREE_ID_SCRIPT, 0, &payload);
 
     assert_eq!(
         hex::encode(&payload),
@@ -158,7 +158,7 @@ fn golden_script_leaf() {
     );
     assert_eq!(
         hex::encode(hash),
-        "b0a5f7e63fe7d0798d7f61c9608eebda9648956180e69ab144dbbc7ec8f0b713",
+        "e871f79d895d85723956f49348258946add01a0a2767442ed1dd3ff5be4d1204",
         "Script leaf hash drifted under v1 domain tag (sub_tree_id=5, canonical_index=0)"
     );
 }
@@ -168,7 +168,7 @@ fn golden_stake_leaf() {
     // Stake leaf with KeyHash DRep (most common Conway-era variant).
     let stake = sample_stake_keyhash();
     let payload = stake.commit_to_subtree();
-    let hash = leaf_hash_v1(SUB_TREE_ID_STAKE, 0, &payload);
+    let hash = leaf_hash_v2(SUB_TREE_ID_STAKE, 0, &payload);
 
     assert_eq!(
         hex::encode(&payload),
@@ -177,7 +177,7 @@ fn golden_stake_leaf() {
     );
     assert_eq!(
         hex::encode(hash),
-        "6608578cc2838b66ca41d030a9b33c252f5a175408611b0c8f42c92e353debd5",
+        "c0b0a45b23f3fc962dfa4aa5670ee2d51f319691ac5b42bf71aaed8479f6eca1",
         "Stake leaf hash drifted under v1 domain tag (sub_tree_id=6, canonical_index=0)"
     );
 }
@@ -187,7 +187,7 @@ fn golden_governance_leaf() {
     // Governance leaf for AccountState pots (the new variant added in B2).
     let fact = sample_account_state();
     let payload = fact.commit_to_subtree();
-    let hash = leaf_hash_v1(SUB_TREE_ID_GOVERNANCE, 0, &payload);
+    let hash = leaf_hash_v2(SUB_TREE_ID_GOVERNANCE, 0, &payload);
 
     assert_eq!(
         hex::encode(&payload),
@@ -196,7 +196,7 @@ fn golden_governance_leaf() {
     );
     assert_eq!(
         hex::encode(hash),
-        "27f7d33482f7df615ef08f70120f50b32973f5e107a249e8f2bad1f52364f47c",
+        "0e0153fd18192852fd46b077be9b584d6068bee0130fffb2258586fd51cba418",
         "Governance AccountState leaf hash drifted under v1 domain tag (sub_tree_id=7, canonical_index=0)"
     );
 }
@@ -209,10 +209,10 @@ fn golden_governance_leaf() {
 /// padding-leaf hash for the UTXO sub-tree.
 #[test]
 fn golden_empty_utxo_set_padding_leaf() {
-    let pad_hash = leaf_hash_v1(SUB_TREE_ID_UTXO, EMPTY_INDEX_SENTINEL, &[]);
+    let pad_hash = leaf_hash_v2(SUB_TREE_ID_UTXO, EMPTY_INDEX_SENTINEL, &[]);
     assert_eq!(
         hex::encode(pad_hash),
-        "140cb8b7b5595a65d3ffd5719fa5baaf5bbf2087885b3b759796240cdb6767f2",
+        "45c92fb25ad1892b5f4f9af8213ff7bcb9dab7d7d2b375b6f2e92c21dc6ad983",
         "Padding-leaf hash for the empty UTXO set drifted"
     );
     // Building an empty UTXO sub-tree yields a depth-0 root equal to the
@@ -231,7 +231,7 @@ fn golden_empty_utxo_set_padding_leaf() {
 fn golden_single_utxo_tree() {
     let utxo = sample_utxo();
     let payload = utxo.commit_to_subtree().expect("encode utxo");
-    let leaf_hash = leaf_hash_v1(SUB_TREE_ID_UTXO, 0, &payload);
+    let leaf_hash = leaf_hash_v2(SUB_TREE_ID_UTXO, 0, &payload);
     let tree = MerkleTree::build_v1(SUB_TREE_ID_UTXO, vec![payload]).unwrap();
     assert_eq!(tree.leaf_count(), 1, "single-UTXO tree has 1 leaf");
     assert_eq!(
@@ -248,7 +248,7 @@ fn golden_single_utxo_tree() {
     // is caught here as well as in the per-sub-tree integration golden.
     assert_eq!(
         hex::encode(tree.root()),
-        "0be58afe1163514b9e992763983b18dfc1e1fa7ffae5d21d19229c5fddd78c49",
+        "374dfc378126879ad1932f7e76a8f700c7b3a8317ff2b57e77a00d7b902ec1f9",
         "Single-UTXO tree root drifted"
     );
 }
@@ -260,7 +260,7 @@ fn golden_single_utxo_tree() {
 fn golden_stake_leaf_always_abstain_drep() {
     let stake = sample_stake_always_abstain();
     let payload = stake.commit_to_subtree();
-    let hash = leaf_hash_v1(SUB_TREE_ID_STAKE, 0, &payload);
+    let hash = leaf_hash_v2(SUB_TREE_ID_STAKE, 0, &payload);
 
     // 66-byte encoding: no DRep payload after the 0x03 tag byte.
     assert_eq!(
@@ -275,7 +275,7 @@ fn golden_stake_leaf_always_abstain_drep() {
     );
     assert_eq!(
         hex::encode(hash),
-        "f340075262998f7e71c87f77f0327f9552b4becd90df3cb2b0d4a1db472631e0",
+        "59bca0fee8e310f2fda99300d1b324ae5755c8ed13133d992f73d69956ca2b72",
         "AlwaysAbstain stake leaf hash drifted"
     );
 }
@@ -402,7 +402,7 @@ fn sample_account_state() -> GovernanceFact {
 #[ignore]
 fn print_actual_values() {
     fn dump_leaf(label: &str, sub_tree_id: u8, payload: &[u8]) {
-        let hash = leaf_hash_v1(sub_tree_id, 0, payload);
+        let hash = leaf_hash_v2(sub_tree_id, 0, payload);
         println!("--- {label} (sub_tree_id={sub_tree_id}) ---");
         println!("  payload_hex: {}", hex::encode(payload));
         println!("  leaf_hash:   {}", hex::encode(hash));
@@ -449,7 +449,7 @@ fn print_actual_values() {
     );
 
     // Edge: empty padding leaf
-    let pad_hash = leaf_hash_v1(SUB_TREE_ID_UTXO, EMPTY_INDEX_SENTINEL, &[]);
+    let pad_hash = leaf_hash_v2(SUB_TREE_ID_UTXO, EMPTY_INDEX_SENTINEL, &[]);
     println!("--- utxo padding leaf (EMPTY_INDEX_SENTINEL) ---");
     println!("  leaf_hash:   {}", hex::encode(pad_hash));
 

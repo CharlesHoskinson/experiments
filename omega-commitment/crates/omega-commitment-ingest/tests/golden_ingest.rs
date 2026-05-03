@@ -48,7 +48,7 @@ fn golden_utxo_root_from_extended_cbor() {
     assert_eq!(
         hex::encode(root),
         // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
-        "2ae8632b3947b820e4cd3a91a0d05db89228c7b9d4e53d3958b43c1709e5a578",
+        "6b56527ecb63c9caaafad3d48cf374c29891778904de912a5c497c16d65593e4",
         "ingestion-layer UTXO root drifted"
     );
 }
@@ -63,7 +63,7 @@ fn golden_token_policy_root_from_extended_cbor() {
     assert_eq!(
         hex::encode(root),
         // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
-        "1aecac9810c93107e4a932f76eb1eee3b625f2c8b9355ff4f20a712c3a2a51ff",
+        "dfa032f56a2080e4de2962aff6c48d6499879887e6c86f941055ffe5eed04d29",
         "ingestion-layer token-policy root drifted"
     );
 }
@@ -78,7 +78,7 @@ fn golden_script_root_from_extended_cbor() {
     assert_eq!(
         hex::encode(root),
         // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
-        "8eed66a730ed1147e6c022e03b20bd9a1114ed3ccea11b8078c2cbdb7ed7ec31",
+        "c7220cf4c80d9f990680f1b855be6ce93ba2d4f8d37960e71efbcf8704c39d65",
         "ingestion-layer script root drifted"
     );
 }
@@ -97,7 +97,7 @@ fn golden_stake_root_from_cbor() {
     assert_eq!(
         hex::encode(root),
         // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
-        "65be9aa4799346da0dc8cd04c142a1282007fc935ee90396ad4201a1970ac004",
+        "5010cf2f42a4dd7c78882c7f7bb522ec87e084096e8eaedd93ba176014958448",
         "ingestion-layer stake root drifted"
     );
 }
@@ -112,7 +112,7 @@ fn golden_governance_root_from_cbor() {
     assert_eq!(
         hex::encode(root),
         // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
-        "c34315048667ee3510f415e1438d0a549f04d48c9dee26ed933f2c3bd66725d8",
+        "f422324d206e21ed9804a21a04f0afe562859a9ca68a62b0d2f4539d76ed1589",
         "ingestion-layer governance root drifted"
     );
 }
@@ -175,15 +175,15 @@ fn golden_hybrid_bundle_roots() {
 
     let bundle = assemble(dir.path()).unwrap();
     assert_eq!(
-        hex::encode(bundle.blake2b_bundle_root),
+        hex::encode(bundle.blake3_bundle_root),
         // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
-        "a035704932850d18ed8293b036387d9c3b14fc7ff047fe3eb88fee490b2b8e24",
-        "hybrid blake2b_bundle_root drifted from Batch 2 v1 pin"
+        "10df2827ae3d16717518da672b6a1749e60cb113c41518a577ff0e2b294d9c46",
+        "hybrid blake3_bundle_root drifted from Batch 2 v1 pin"
     );
     assert_eq!(
         hex::encode(bundle.sha3_bundle_root),
         // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
-        "b2f739a441541eb9cb7dc543dd71c5ffd531ba34003744b1ac2274885945de7b",
+        "1283496de8998304e5c9550bea648deffe3fc9a090efafa4748a2f91d026e24a",
         "hybrid sha3_bundle_root drifted from Batch 2 v1 pin"
     );
 }

@@ -4,12 +4,12 @@
 //!   (tx_id: 32 bytes) || (slot: u64 BE) ||
 //!   (block_hash: 32 bytes) || (tx_position: u32 BE)
 //!
-//! Total: 76 bytes. The leaf is hashed with Blake2b-256 to produce
+//! Total: 76 bytes. The leaf is hashed with Blake3-256 to produce
 //! the leaf hash that goes into the Merkle tree. This sub-tree powers
 //! `claim_tx` transactions: users prove "tx H existed at slot S in
 //! block B at position P."
 
-use crate::hash::{blake2b_256, Hash};
+use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -34,12 +34,12 @@ impl TxIndexEntry {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake2b-256 of the
+    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
     /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
     /// canonical payload that the domain-separated Merkle builder
     /// consumes.
     pub fn leaf_hash(&self) -> Hash {
-        blake2b_256(&self.encode())
+        blake3_256(&self.encode())
     }
 
     /// Return the canonical raw payload bytes for the v1 Merkle

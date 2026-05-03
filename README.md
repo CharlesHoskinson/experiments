@@ -4,7 +4,7 @@ Working space for in-progress research and prototypes. Two pieces here belong to
 
 | Subdirectory | What it is | Status |
 |---|---|---|
-| [`omega-commitment/`](./omega-commitment/) | Rust workspace producing the Ω-Commitment, a single hash that captures the entire pre-fork Cardano state across 7 sub-trees | v0.9.1, 282 tests |
+| [`omega-commitment/`](./omega-commitment/) | Rust workspace producing the Ω-Commitment, a single hash that captures the entire pre-fork Cardano state across 7 sub-trees | v0.10.0-rc1 (Blake3), 292 tests |
 | [`cardano-wiki/`](./cardano-wiki/) | LLM-maintained research wiki: Cardano consensus, EUTXO, Plutus, Hydra, Mithril, Leios, Voltaire governance, plus the Omega program design and the v1.0 ingestion plans | Living document |
 
 The four sibling documents at repo root frame the program at decreasing levels of abstraction. [`README.md`](./README.md) (this file) is the entry point. [`GOALS.md`](./GOALS.md) lists what the program is trying to accomplish across all twelve tracks. [`ARCHITECTURE.md`](./ARCHITECTURE.md) is the deep-dive on the cryptographic construction, the consensus stack, the zkVM layer, and the v1.0 ingestion pipeline. [`RESEARCH-QUESTIONS.md`](./RESEARCH-QUESTIONS.md) treats the ten genuinely-open issues from the design spec at length.
@@ -15,7 +15,7 @@ Cardano shipped in 2017 against an elliptic-curve stack: Ed25519 for ordinary si
 
 The trickiest part of a clean-slate fork is the existing state. Cardano has roughly ten million UTxOs, 2.5 million stake credentials, 2,940 stake pools, a thousand DReps, and eight years of block history. None of that should disappear when the new chain starts. None of it should sit in Omega's genesis ledger either, pre-loaded and ready to be re-validated by Omega's nodes, because that would force every Omega validator to carry the entire historical weight of Cardano forever. The Ω-Commitment is the bridge primitive that resolves the tension. It is one Merkle root over seven sub-trees of pre-fork state (UTxOs, block headers, transaction index, native token policies, scripts, stake state, governance state), published once in Omega's genesis block, after which Omega's ledger starts empty. State migration is pull-based: a holder who wants their old UTxO back submits a `claim_utxo` transaction with a Merkle membership proof against the published root, and a Plonky3 verifier inside Omega's ledger confirms the proof and credits the address. Dust addresses that nobody bothers to claim cost the new chain nothing.
 
-The full design is a four-layer post-quantum stack rather than just a commitment. Layer one is this repository's commitment-tooling work (track T1) plus the on-chain verifier circuit (T6) that consumes claims. Layer two is the consensus stack: Ouroboros Crypsinous ([eprint 2018/1132](https://eprint.iacr.org/2018/1132)) for shielded VRF and encrypted mempool, Ouroboros Chronos ([eprint 2019/838](https://eprint.iacr.org/2019/838)) for permissionless proof-of-stake clock synchronisation, Minotaur ([eprint 2022/104](https://eprint.iacr.org/2022/104)) for multi-resource composition combining stake with storage. Layer three is the smart-contract execution model: [LFDT-Nightstream/Starstream](https://github.com/LFDT-Nightstream/Starstream), a UTXO-based zkVM with coroutines as the primitive, native folding scheme, and Goldilocks plus Poseidon2 in-circuit. Layer four is optional infrastructure: a Filecoin-fork mirror partnerchain under the [Cardano partnerchains SDK](https://github.com/input-output-hk/partner-chains) that stores the snapshot archive and provides Minotaur's storage-resource input, with storage providers earning both retrieval fees and Omega-side block rewards. All four layers use the same primitive set: Blake2b-256, SHA3-256, Poseidon2 in-circuit, Goldilocks field, [SLH-DSA](https://csrc.nist.gov/pubs/fips/205/final) / [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) / FN-DSA for signatures, Plonky3 STARKs (no trusted setup), no curves anywhere.
+The full design is a four-layer post-quantum stack rather than just a commitment. Layer one is this repository's commitment-tooling work (track T1) plus the on-chain verifier circuit (T6) that consumes claims. Layer two is the consensus stack: Ouroboros Crypsinous ([eprint 2018/1132](https://eprint.iacr.org/2018/1132)) for shielded VRF and encrypted mempool, Ouroboros Chronos ([eprint 2019/838](https://eprint.iacr.org/2019/838)) for permissionless proof-of-stake clock synchronisation, Minotaur ([eprint 2022/104](https://eprint.iacr.org/2022/104)) for multi-resource composition combining stake with storage. Layer three is the smart-contract execution model: [LFDT-Nightstream/Starstream](https://github.com/LFDT-Nightstream/Starstream), a UTXO-based zkVM with coroutines as the primitive, native folding scheme, and Goldilocks plus Poseidon2 in-circuit. Layer four is optional infrastructure: a Filecoin-fork mirror partnerchain under the [Cardano partnerchains SDK](https://github.com/input-output-hk/partner-chains) that stores the snapshot archive and provides Minotaur's storage-resource input, with storage providers earning both retrieval fees and Omega-side block rewards. All four layers use the same primitive set: Blake3-256, SHA3-256, Poseidon2 in-circuit, Goldilocks field, [SLH-DSA](https://csrc.nist.gov/pubs/fips/205/final) / [ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) / FN-DSA for signatures, Plonky3 STARKs (no trusted setup), no curves anywhere.
 
 The protocol explicitly forbids backdoors. There are no escrow keys, no court-recovery mechanisms, no designated-viewer roles, no master-recovery paths, no regulator-friendly disclosure surface. The reasoning is a one-liner: a global cryptographic network whose code is auditable everywhere cannot have a backdoor that only some jurisdictions get to use, because every jurisdiction will demand its own. Three layers of constitutional binding enforce the no-backdoor stance. Layer one is the [CIP-1694](https://cips.cardano.org/cips/cip1694/)-shaped guardrails script, which statically rejects any parameter-update proposal that would replace the genesis commitment, introduce a master / recovery / escrow key, or remove the [PLUME](https://eips.ethereum.org/EIPS/eip-7524) nullifier requirement. Layer two is the Plonky3 verifier circuit itself: invariants compiled into hardware-style constraints rather than into governance policy, beyond reach of any vote. Layer three is the social-fork pre-commitment: the wallet ecosystem decides which chain is "Omega" via reproducible-build attestations, so a captured-stake supermajority that votes to insert a backdoor produces a different chain that wallets refuse to recognise. Steem-to-Hive is the operational template for layer three.
 
@@ -63,19 +63,19 @@ The diagram below traces a single UTxO across the full lifecycle: Cardano-side n
                                  │
                                  ▼
         For each sub-tree i, for each leaf L_j at canonical index idx_j:
-          leaf_hash_j = H_blake2b("omega:v1:leaf" || i || idx_j || len || payload_j)
+          leaf_hash_j = H_blake3("omega:v2:leaf" || i || idx_j || len || payload_j)
         Build binary Merkle tree, sort, pad to next power of two with
-        leaf_hash_v1(i, EMPTY_INDEX_SENTINEL=u64::MAX, &[]).
+        leaf_hash_v2(i, EMPTY_INDEX_SENTINEL=u64::MAX, &[]).
         Internal nodes:
-          node = H_blake2b("omega:v1:node" || left || right)
+          node = H_blake3("omega:v2:node" || left || right)
         Yields per-sub-tree root: root_i.
                                  │
                                  ▼
-        bundle_blake2b = H_blake2b(root_1 || root_2 || ... || root_7)
+        bundle_blake3 = H_blake3(root_1 || root_2 || ... || root_7)
         bundle_sha3    = H_sha3   (root_1 || root_2 || ... || root_7)
                                  │
                                  ▼
-              Ω-Commitment = (bundle_blake2b, bundle_sha3)   ← 64 bytes total
+              Ω-Commitment = (bundle_blake3, bundle_sha3)   ← 64 bytes total
 
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │ PHASE C — Genesis publication (Omega-side, one-time, mass-MPC)                 │
@@ -87,7 +87,7 @@ The diagram below traces a single UTxO across the full lifecycle: Cardano-side n
 
   Omega genesis block pins:
   ┌──────────────────────────────────────────────────────────┐
-  │ ω-commit:    (bundle_blake2b, bundle_sha3)               │
+  │ ω-commit:    (bundle_blake3, bundle_sha3)               │
   │ snap-block:  Cardano block hash B_H at height H          │
   │ snap-cert:   Mithril certificate hash                    │
   │ ceremony:    mass-MPC transcript hash                    │
@@ -117,7 +117,7 @@ The diagram below traces a single UTxO across the full lifecycle: Cardano-side n
        PUBLIC INPUTS (visible on chain):
          • sub_tree_id = 1                       (UTxO sub-tree)
          • leaf_index  = idx_F                   (canonical index in sub-tree)
-         • bundle_root = bundle_blake2b          (must match ω-commit in genesis)
+         • bundle_root = bundle_blake3          (must match ω-commit in genesis)
          • nullifier   = PLUME(K_pq,
                                "omega:v1:claim:" || sub_tree_id || idx_F)
          • recipient   = Starstream UTxO target
@@ -125,7 +125,7 @@ The diagram below traces a single UTxO across the full lifecycle: Cardano-side n
        PRIVATE WITNESS (inside circuit, never revealed):
          • leaf_payload_F = (tx_id_F, output_index_F, address_F,
                              value_F, asset_bundle_F, datum_F, script_F)
-         • Merkle path π from leaf_F to bundle_blake2b
+         • Merkle path π from leaf_F to bundle_blake3
          • PQ signature σ over (sub_tree_id || idx_F || recipient || nullifier)
          • Address pre-image data binding K_pq to address_F
 
@@ -169,11 +169,11 @@ A `claim_utxo` transaction is accepted iff a Plonky3 STARK proof discharges the 
 
 | # | Constraint | Defends against |
 |---|---|---|
-| C1 | `leaf_hash = H_blake2b("omega:v1:leaf" \|\| sub_tree_id \|\| leaf_index \|\| len \|\| payload)` for the disclosed witness payload | Forged leaf encoding; leaf-as-internal-node second-preimage swap |
+| C1 | `leaf_hash = H_blake3("omega:v2:leaf" \|\| sub_tree_id \|\| leaf_index \|\| len \|\| payload)` for the disclosed witness payload | Forged leaf encoding; leaf-as-internal-node second-preimage swap |
 | C2 | `leaf_index < item_count[sub_tree_id]` (item counts pinned in genesis params) | Padding-leaf forgery via the `EMPTY_INDEX_SENTINEL` sentinel |
-| C3 | Walk Merkle path π one node at a time: `node_k = H_blake2b("omega:v1:node" \|\| left_k \|\| right_k)` | Internal-node forgery; sibling tampering |
+| C3 | Walk Merkle path π one node at a time: `node_k = H_blake3("omega:v2:node" \|\| left_k \|\| right_k)` | Internal-node forgery; sibling tampering |
 | C4 | Path terminates with `root_i == published per-sub-tree root for sub_tree_id` (pinned in genesis params) | Wrong sub-tree; root substitution |
-| C5 | `bundle_blake2b == H_blake2b(root_1 \|\| ... \|\| root_7)` against the genesis `ω-commit` | Stale commitment; cross-snapshot replay |
+| C5 | `bundle_blake3 == H_blake3(root_1 \|\| ... \|\| root_7)` against the genesis `ω-commit` | Stale commitment; cross-snapshot replay |
 | C6 | PQ signature σ verifies under the address-derived public key | Credential theft; impersonation |
 | C7 | `nullifier == PLUME(K_pq, "omega:v1:claim:" \|\| sub_tree_id \|\| leaf_index)` | Nullifier substitution; cross-claim aliasing |
 | C8 | `nullifier ∉ ledger.nullifier_set` (off-circuit ledger state read) | Replay; double-claim |
@@ -228,13 +228,13 @@ The diagram traces the program across four lanes: pre-fork construction (off-cha
                   (binary, fixed-arity, deterministic ordering, padded)
                              │
                              ▼
-                  Per-sub-tree roots (Blake2b only)
+                  Per-sub-tree roots (Blake3 only)
                              │
                              ▼
-                  Bundle root (Blake2b + SHA3 — drift-detection, NOT break-hedge)
+                  Bundle root (Blake3 + SHA3 — drift-detection, NOT break-hedge)
                              │
                              ▼
-                  Ω-Commitment = (blake2b_root, sha3_root)  64 B total
+                  Ω-Commitment = (blake3_root, sha3_root)  64 B total
 
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │ LANE 2 — GENESIS PUBLICATION  (one-time, mass-MPC ceremony)                    │
@@ -246,7 +246,7 @@ The diagram traces the program across four lanes: pre-fork construction (off-cha
                              ▼
   Omega genesis block
   ┌──────────────────────────────────────────────────────────┐
-  │ ω-commit:    (blake2b_root, sha3_root)                   │
+  │ ω-commit:    (blake3_root, sha3_root)                   │
   │ snap-block:  <pinned Cardano block hash>                 │
   │ snap-cert:   <Mithril cert hash>                         │
   │ ceremony:    <mass-MPC transcript hash>                  │
@@ -326,7 +326,7 @@ The diagram traces the program across four lanes: pre-fork construction (off-cha
 
 The construction has three trust boundaries the design treats explicitly. The first is the Mithril certificate over the snapshot bytes, which the cross-implementation reproducibility check tightens by re-deriving the same seven sub-tree roots from the certified immutable database under multiple independent codebases. The second is the mass-MPC genesis ceremony itself, which is m-of-n co-signed by Cardano users who participate Zcash-Sapling style. Each participant contributes randomness, the resulting transcript and the published Ω-Commitment are pinned together in genesis, and any single honest contributor is enough to invalidate a backdoored ceremony. The third is the Plonky3 verifier circuit, which the program treats as needing its own audit at the exact FRI rate and query count baked into the genesis parameters. None of the three trust boundaries reduce to "trust the protocol team," which is the property the four-layer construction is designed around.
 
-A few cryptographic choices in the diagram are easy to misread and deserve calling out. The dual-hash at the bundle layer is a drift-detection signal, not a binding-agility hedge against a Blake2b break. Both bundle roots aggregate over the same v1 Blake2b leaf hashes, so a leaf-level Blake2b break would defeat both; the SHA3 root catches divergence introduced in the aggregation step, and pre-pays the v2.0 truly-independent SHA3 tree (separate per-leaf SHA3 hashing). Consumers should not over-rely on the current SHA3 track. Domain separation is in code: every leaf is hashed as `H("omega:v1:leaf" || sub_tree_id || canonical_index_be || payload_len_be || payload)` via `leaf_hash_v1`, and every internal node as `H("omega:v1:node" || left || right)` via `node_hash_v1`. Padding to the next power of two uses `leaf_hash_v1(sub_tree_id, EMPTY_INDEX_SENTINEL=u64::MAX, &[])` rather than the raw zero hash, so a verifier reading a published `item_count` rejects any inclusion proof whose canonical index is `>= item_count` as a padding-leaf forgery. The verifier's nullifier set is keyed by `(sub_tree_id, leaf_index)` rather than by raw credential. Each leaf can only be consumed once across all sub-trees, but a single Cardano credential that holds positions in multiple sub-trees submits one claim per leaf; the Plonky3 proof commits to a fresh `(sub_tree_id, leaf_index)` pair and the ledger refuses any second claim for the same pair. The PLUME nullifier (ERC-7524) is what prevents replay across forks of the snapshot, which the §13.1 guardrails script statically requires and which a captured-stake supermajority cannot vote to remove. Several design questions remain open and are flagged in [`RESEARCH-QUESTIONS.md`](./RESEARCH-QUESTIONS.md) at length, including the hash-based VRF construction (which gates all three consensus papers), the lattice-vs-hash signature decision at the user-signing layer, the PQ threshold-encryption committee composition, the claim-window length, and the Plutus-to-Starstream translation question.[^pq-sigs]
+A few cryptographic choices in the diagram are easy to misread and deserve calling out. The dual-hash at the bundle layer is a drift-detection signal, not a binding-agility hedge against a Blake3 break. Both bundle roots aggregate over the same v1 Blake3 leaf hashes, so a leaf-level Blake3 break would defeat both; the SHA3 root catches divergence introduced in the aggregation step, and pre-pays the v2.0 truly-independent SHA3 tree (separate per-leaf SHA3 hashing). Consumers should not over-rely on the current SHA3 track. Domain separation is in code: every leaf is hashed as `H("omega:v2:leaf" || sub_tree_id || canonical_index_be || payload_len_be || payload)` via `leaf_hash_v2`, and every internal node as `H("omega:v2:node" || left || right)` via `node_hash_v2`. Padding to the next power of two uses `leaf_hash_v2(sub_tree_id, EMPTY_INDEX_SENTINEL=u64::MAX, &[])` rather than the raw zero hash, so a verifier reading a published `item_count` rejects any inclusion proof whose canonical index is `>= item_count` as a padding-leaf forgery. The verifier's nullifier set is keyed by `(sub_tree_id, leaf_index)` rather than by raw credential. Each leaf can only be consumed once across all sub-trees, but a single Cardano credential that holds positions in multiple sub-trees submits one claim per leaf; the Plonky3 proof commits to a fresh `(sub_tree_id, leaf_index)` pair and the ledger refuses any second claim for the same pair. The PLUME nullifier (ERC-7524) is what prevents replay across forks of the snapshot, which the §13.1 guardrails script statically requires and which a captured-stake supermajority cannot vote to remove. Several design questions remain open and are flagged in [`RESEARCH-QUESTIONS.md`](./RESEARCH-QUESTIONS.md) at length, including the hash-based VRF construction (which gates all three consensus papers), the lattice-vs-hash signature decision at the user-signing layer, the PQ threshold-encryption committee composition, the claim-window length, and the Plutus-to-Starstream translation question.[^pq-sigs]
 
 [^pq-sigs]: Signature-size ranges are the union of the parameter sets specified in the cited FIPS publications. SLH-DSA: NIST FIPS 205 ("Stateless Hash-Based Digital Signature Standard," August 2024), `SLH-DSA-SHA2-128s` ≈ 7,856 bytes (smallest "small" parameter set) through `SLH-DSA-SHAKE-256f` ≈ 49,856 bytes (largest "fast" parameter set), Tables 1 and 2. ML-DSA: NIST FIPS 204 ("Module-Lattice-Based Digital Signature Standard," August 2024), `ML-DSA-44` ≈ 2,420 bytes through `ML-DSA-87` ≈ 4,627 bytes, Table 2. FN-DSA / FALCON: forthcoming NIST FIPS 206 (still draft as of 2026-05; the public draft URL has shifted at least once), Falcon-512 ≈ 666 bytes, Falcon-1024 ≈ 1,280 bytes per the round-3 submission package, with the final FIPS 206 numbers expected to match.
 

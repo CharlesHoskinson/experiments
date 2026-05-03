@@ -21,7 +21,7 @@ pub mod witness;
 // ---------------------------------------------------------------------------
 // Sub-tree identifiers.
 //
-// One-byte tags bound into every v1 leaf hash via `tree::leaf_hash_v1`. The
+// One-byte tags bound into every v1 leaf hash via `tree::leaf_hash_v2`. The
 // values are stable: a verifier sees the tag in the leaf preimage and
 // rejects any leaf claimed against the wrong sub-tree. See `tree.rs` for
 // the domain-separated leaf/node hash construction.

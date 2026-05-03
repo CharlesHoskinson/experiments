@@ -1,10 +1,10 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use omega_commitment_core::{hash::blake2b_256, tree::MerkleTree};
+use omega_commitment_core::{hash::blake3_256, tree::MerkleTree};
 
 fn bench_tree_build(c: &mut Criterion) {
     for n in [1_000usize, 10_000, 100_000].iter() {
         let leaves: Vec<_> = (0..*n)
-            .map(|i| blake2b_256(&(i as u64).to_be_bytes()))
+            .map(|i| blake3_256(&(i as u64).to_be_bytes()))
             .collect();
         let mut group = c.benchmark_group("merkle_tree_build");
         group.throughput(Throughput::Elements(*n as u64));
