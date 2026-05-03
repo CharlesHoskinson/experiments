@@ -1,7 +1,7 @@
 //! End-to-end integration test for the governance-state sub-tree.
 
 use omega_commitment_core::{
-    governance_state_leaf::{validate_governance_keys_unique_per_kind, GovernanceFact},
+    governance_state_leaf::{kind, validate_governance_keys_unique_per_kind, GovernanceFact},
     tree::MerkleTree,
     witness::InclusionWitness,
 };
@@ -49,20 +49,43 @@ fn root_is_stable_across_runs() {
 }
 
 #[test]
-fn all_four_kinds_present_in_fixture() {
+fn all_five_kinds_present_in_fixture() {
     let f: Fixture = serde_json::from_str(FIXTURE).unwrap();
-    let kinds: std::collections::HashSet<u8> = f.facts.iter().map(|x| x.kind).collect();
-    assert_eq!(kinds.len(), 4, "expected all 4 kinds");
-    for expected in 0..=3u8 {
+    let kinds: std::collections::HashSet<u8> = f.facts.iter().map(|x| x.kind()).collect();
+    assert_eq!(kinds.len(), 5, "expected all 5 kinds");
+    for expected in [
+        kind::TREASURY,
+        kind::CC_SEAT,
+        kind::RATIFIED_ACTION,
+        kind::IN_FLIGHT_ACTION,
+        kind::ACCOUNT_STATE,
+    ] {
         assert!(kinds.contains(&expected), "missing kind={expected}");
     }
 }
 
 #[test]
-fn large_u128_value_round_trips() {
+fn account_state_pots_round_trip() {
     let f: Fixture = serde_json::from_str(FIXTURE).unwrap();
-    let last = f.facts.last().unwrap();
-    assert_eq!(last.value, u128::MAX - 1);
+    let acc = f
+        .facts
+        .iter()
+        .find(|x| matches!(x, GovernanceFact::AccountState { .. }))
+        .expect("fixture must include AccountState");
+    match acc {
+        GovernanceFact::AccountState {
+            reserves,
+            treasury,
+            deposits,
+            fee_pot,
+        } => {
+            assert_eq!(*reserves, 13_000_000_000_000_000);
+            assert_eq!(*treasury, 1_700_000_000_000_000);
+            assert_eq!(*deposits, 50_000_000_000);
+            assert_eq!(*fee_pot, 250_000);
+        }
+        _ => unreachable!(),
+    }
 }
 
 #[test]

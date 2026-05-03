@@ -11,7 +11,7 @@ use crate::cbor::{
     read_u32, read_u64, read_u8, read_var_bytes,
 };
 use anyhow::Result;
-use omega_commitment_core::utxo_leaf::Utxo;
+use omega_commitment_core::utxo_leaf::{DatumOption, Utxo};
 use pallas_codec::minicbor::Decoder;
 use serde::Serialize;
 
@@ -26,10 +26,15 @@ pub struct UtxoOutput {
 ///
 /// Fixture format (Conway-era LedgerState parsing is future work):
 ///   CBOR array of N UTXOs, each a 4-element array of:
-///     [ tx_id (32 bytes), output_index (u64), address (32 bytes),
+///     [ tx_id (32 bytes), output_index (u64), address (variable bytes),
 ///       value_lovelace (u64) ]
 ///   or a 6-element v0.9+ array that appends:
 ///     [ multi_assets, script_credential ]
+///
+/// `address` is the raw Cardano address payload per CIP-19; the leading
+/// header byte is preserved verbatim. The fixture historically wrote a
+/// 32-byte placeholder there — that placeholder is still accepted as
+/// an opaque address when the fixture predates Batch 2.
 pub fn ingest_utxos(cbor: &[u8]) -> Result<UtxoOutput> {
     let mut d = Decoder::new(cbor);
     let n = read_array_len(&mut d)?;
@@ -44,7 +49,7 @@ pub fn ingest_utxos(cbor: &[u8]) -> Result<UtxoOutput> {
         let tx_id = read_32_bytes(&mut d)?;
         let output_index = u32::try_from(read_u64(&mut d)?)
             .map_err(|_| anyhow::anyhow!("output_index too large for u32"))?;
-        let address_hash = read_32_bytes(&mut d)?;
+        let address = read_var_bytes(&mut d)?;
         let value_lovelace = read_u64(&mut d)?;
         let mut assets = Vec::new();
         if arity == 6 {
@@ -57,10 +62,11 @@ pub fn ingest_utxos(cbor: &[u8]) -> Result<UtxoOutput> {
         utxos.push(Utxo {
             tx_id,
             output_index,
-            address_hash,
+            address,
             value_lovelace,
             assets,
-            datum_hash: None,
+            datum_option: DatumOption::None,
+            script_ref: None,
         });
     }
     expect_end(&d, cbor.len())?;
@@ -71,17 +77,52 @@ pub fn ingest_utxos(cbor: &[u8]) -> Result<UtxoOutput> {
 /// into a flat `Vec<Asset>`. Each `(policy_id, asset_name)` pair becomes one
 /// `Asset` with `asset_id = policy_id || asset_name` (concatenated bytes per
 /// the canonical Cardano native-asset identifier convention).
+///
+/// **Canonicality.** Both the outer policy map and the inner asset-name
+/// map MUST be sorted ascending by raw key bytes and unique. Duplicate
+/// or out-of-order keys are rejected — Cardano CBOR snapshots are
+/// produced in sorted form, and accepting a non-canonical input would
+/// admit two byte-different inputs that hash to the same omega leaf.
+/// (Closes audit finding A3/F005; will be typified into
+/// `IngestError::NonCanonicalAssetMap` in Batch 5.)
+///
+/// Asset-name bytes are preserved verbatim — no UTF-8 normalisation —
+/// because Cardano asset names are arbitrary byte strings and
+/// re-encoding them would silently change the asset identity.
 fn parse_multi_assets(
     d: &mut pallas_codec::minicbor::Decoder<'_>,
 ) -> anyhow::Result<Vec<omega_commitment_core::utxo_leaf::Asset>> {
     use omega_commitment_core::utxo_leaf::Asset;
     let mut assets = Vec::new();
     let n_policies = read_map_len(d)?;
+    let mut last_policy: Option<[u8; 28]> = None;
     for _ in 0..n_policies {
         let policy: [u8; 28] = read_28_bytes(d)?;
+        if let Some(prev) = last_policy {
+            if policy <= prev {
+                return Err(anyhow::anyhow!(
+                    "non-canonical asset map: policy_id {} not strictly greater than previous {}",
+                    hex::encode(policy),
+                    hex::encode(prev)
+                ));
+            }
+        }
+        last_policy = Some(policy);
         let n_assets = read_map_len(d)?;
+        let mut last_name: Option<Vec<u8>> = None;
         for _ in 0..n_assets {
             let name: Vec<u8> = read_var_bytes(d)?;
+            if let Some(prev) = &last_name {
+                if name.as_slice() <= prev.as_slice() {
+                    return Err(anyhow::anyhow!(
+                        "non-canonical asset map: asset_name {} not strictly greater than previous {} under policy {}",
+                        hex::encode(&name),
+                        hex::encode(prev),
+                        hex::encode(policy)
+                    ));
+                }
+            }
+            last_name = Some(name.clone());
             let qty: u64 = read_u64(d)?;
             // asset_id = policy_id (28 bytes) || asset_name (variable).
             let mut asset_id = Vec::with_capacity(28 + name.len());
@@ -185,9 +226,15 @@ mod tests {
         assert_eq!(out.utxos[0].tx_id, [0x11; 32]);
         assert_eq!(out.utxos[0].output_index, 0);
         assert_eq!(out.utxos[0].value_lovelace, 1_000_000);
+        // Address byte length matches the fixture (32 bytes of 0xAA).
+        assert_eq!(out.utxos[0].address, vec![0xAAu8; 32]);
         assert_eq!(out.utxos[2].value_lovelace, 250_000_000);
         assert!(out.utxos.iter().all(|u| u.assets.is_empty()));
-        assert!(out.utxos.iter().all(|u| u.datum_hash.is_none()));
+        assert!(out
+            .utxos
+            .iter()
+            .all(|u| matches!(u.datum_option, DatumOption::None)));
+        assert!(out.utxos.iter().all(|u| u.script_ref.is_none()));
     }
 
     #[test]
@@ -267,10 +314,11 @@ mod tests {
         assert_eq!(out.utxos.len(), 1);
         assert_eq!(out.utxos[0].tx_id, [0x11; 32]);
         assert_eq!(out.utxos[0].output_index, 0);
-        assert_eq!(out.utxos[0].address_hash, [0x22; 32]);
+        assert_eq!(out.utxos[0].address, vec![0x22u8; 32]);
         assert_eq!(out.utxos[0].value_lovelace, 1_000_000);
         assert!(out.utxos[0].assets.is_empty());
-        assert!(out.utxos[0].datum_hash.is_none());
+        assert!(matches!(out.utxos[0].datum_option, DatumOption::None));
+        assert!(out.utxos[0].script_ref.is_none());
     }
 
     #[test]
@@ -318,5 +366,102 @@ mod tests {
         tampered.push(0xFF); // trailing byte
         let result = ingest_utxos(&tampered);
         assert!(result.is_err(), "trailing byte must be rejected");
+    }
+
+    #[test]
+    fn parse_multi_assets_rejects_out_of_order_policies() {
+        // CBOR for { policy_FF: {}, policy_00: {} } — policies in
+        // descending order. The outer policy map must be ascending.
+        // Build a minimal extended UTXO that wraps this map.
+        fn cbor_bytes(b: &[u8]) -> Vec<u8> {
+            let mut o = vec![0x58u8, b.len() as u8];
+            o.extend_from_slice(b);
+            o
+        }
+        let mut policy_hi = [0u8; 28];
+        policy_hi[0] = 0xFF;
+        let mut policy_lo = [0u8; 28];
+        policy_lo[0] = 0x00;
+
+        let mut multi_asset = vec![0xA2u8]; // map of 2
+        multi_asset.extend(cbor_bytes(&policy_hi));
+        multi_asset.push(0xA0); // empty inner map
+        multi_asset.extend(cbor_bytes(&policy_lo));
+        multi_asset.push(0xA0);
+
+        let mut buf = vec![0x81u8, 0x86u8]; // outer array of 1, inner UTXO of 6
+        buf.extend(cbor_bytes(&[0x11u8; 32])); // tx_id
+        buf.push(0x00); // output_index = 0
+        buf.extend(cbor_bytes(&[0x22u8; 32])); // address (placeholder)
+        buf.push(0x00); // value = 0
+        buf.extend(multi_asset);
+        buf.push(0xF6); // null script_credential
+
+        let err = ingest_utxos(&buf).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("non-canonical asset map") && msg.contains("policy_id"),
+            "expected non-canonical asset-map error, got {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_multi_assets_rejects_duplicate_policies() {
+        fn cbor_bytes(b: &[u8]) -> Vec<u8> {
+            let mut o = vec![0x58u8, b.len() as u8];
+            o.extend_from_slice(b);
+            o
+        }
+        let policy = [0x10u8; 28];
+
+        let mut multi_asset = vec![0xA2u8]; // map of 2
+        multi_asset.extend(cbor_bytes(&policy));
+        multi_asset.push(0xA0);
+        multi_asset.extend(cbor_bytes(&policy));
+        multi_asset.push(0xA0);
+
+        let mut buf = vec![0x81u8, 0x86u8];
+        buf.extend(cbor_bytes(&[0x11u8; 32]));
+        buf.push(0x00);
+        buf.extend(cbor_bytes(&[0x22u8; 32]));
+        buf.push(0x00);
+        buf.extend(multi_asset);
+        buf.push(0xF6);
+
+        let err = ingest_utxos(&buf).unwrap_err();
+        assert!(format!("{err}").contains("non-canonical asset map"));
+    }
+
+    #[test]
+    fn parse_multi_assets_rejects_out_of_order_asset_names() {
+        fn cbor_bytes(b: &[u8]) -> Vec<u8> {
+            let mut o = vec![0x58u8, b.len() as u8];
+            o.extend_from_slice(b);
+            o
+        }
+        let policy = [0x10u8; 28];
+        // Inner map: { name_HI => 1, name_LO => 1 }
+        let mut inner = vec![0xA2u8];
+        inner.push(0x42);
+        inner.extend_from_slice(&[0xFF, 0xFF]);
+        inner.push(0x01);
+        inner.push(0x42);
+        inner.extend_from_slice(&[0x00, 0x00]);
+        inner.push(0x01);
+
+        let mut multi_asset = vec![0xA1u8];
+        multi_asset.extend(cbor_bytes(&policy));
+        multi_asset.extend(inner);
+
+        let mut buf = vec![0x81u8, 0x86u8];
+        buf.extend(cbor_bytes(&[0x11u8; 32]));
+        buf.push(0x00);
+        buf.extend(cbor_bytes(&[0x22u8; 32]));
+        buf.push(0x00);
+        buf.extend(multi_asset);
+        buf.push(0xF6);
+
+        let err = ingest_utxos(&buf).unwrap_err();
+        assert!(format!("{err}").contains("non-canonical asset map"));
     }
 }

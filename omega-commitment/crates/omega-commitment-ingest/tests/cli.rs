@@ -109,5 +109,5 @@ fn cli_ingest_governance_writes_output() {
     assert!(out_file.exists());
     let body = fs::read_to_string(&out_file).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(parsed["facts"].as_array().unwrap().len(), 4);
+    assert_eq!(parsed["facts"].as_array().unwrap().len(), 5);
 }

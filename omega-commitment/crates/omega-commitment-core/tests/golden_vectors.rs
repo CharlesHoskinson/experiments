@@ -68,10 +68,10 @@ fn golden_utxo_root() {
     let root = MerkleTree::build_v1(SUB_TREE_ID_UTXO, payloads)
         .unwrap()
         .root();
-    // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
+    // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "93141ad316c9ad53b27f8b5e5dad40aea0f8c6fa98522f64f6efb6886d3ee10c",
+        "91616efc4abd705058021cd0a7dba3ac8938a50a60d679bb6e43b82e29e899a9",
         "UTXO sub-tree root drifted"
     );
 }
@@ -147,10 +147,10 @@ fn golden_stake_root() {
     let root = MerkleTree::build_v1(SUB_TREE_ID_STAKE, payloads)
         .unwrap()
         .root();
-    // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
+    // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "1beaf83f7cd4ae62eca2b3d36decee1d5894648587b9bc671f026a14434f522f",
+        "e2451a79d8fda2c5d15edc689980452a05a2fae6234144e198a3b77d1cec2e2a",
         "Stake-state sub-tree root drifted"
     );
 }
@@ -166,10 +166,10 @@ fn golden_governance_root() {
     let root = MerkleTree::build_v1(SUB_TREE_ID_GOVERNANCE, payloads)
         .unwrap()
         .root();
-    // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
+    // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
     assert_eq!(
         hex::encode(root),
-        "50f021b3dab7410b770cf648524417469d26435b530fb9ceccc4f50222d6dc8f",
+        "c83880ddeb7f43744ccd8453a367502a32aa7bf07187f632100908316871a1e4",
         "Governance-state sub-tree root drifted"
     );
 }

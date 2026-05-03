@@ -35,6 +35,60 @@ pub mod hex_vec_hash {
     }
 }
 
+/// Serde adapter for `u128` that survives buffered/internally-tagged
+/// deserialization in `serde_json`.
+///
+/// Default `serde_json` cannot dispatch `deserialize_u128` from the
+/// internally-buffered `Content` path that `#[serde(tag = "...")]` enums
+/// rely on. Routing the field through this adapter encodes u128 as a
+/// JSON string and accepts either JSON string or JSON number on
+/// deserialize, sidestepping the buffered-path limitation.
+///
+/// Use as `#[serde(with = "crate::serde_helpers::u128_dec")]`.
+pub mod u128_dec {
+    use serde::{de, Deserializer, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S: Serializer>(v: &u128, s: S) -> Result<S::Ok, S::Error> {
+        // Encode as a decimal string so the wire form fits in any JSON
+        // consumer regardless of u128 support. (Cardano u128 values can
+        // exceed 2^64 — see the governance ratified-action packed value.)
+        s.serialize_str(&v.to_string())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u128, D::Error> {
+        struct V;
+        impl<'de> de::Visitor<'de> for V {
+            type Value = u128;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a u128 as a decimal string or JSON number")
+            }
+            fn visit_str<E: de::Error>(self, s: &str) -> Result<u128, E> {
+                s.parse::<u128>().map_err(de::Error::custom)
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> Result<u128, E> {
+                Ok(v as u128)
+            }
+            fn visit_u128<E: de::Error>(self, v: u128) -> Result<u128, E> {
+                Ok(v)
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> Result<u128, E> {
+                u128::try_from(v).map_err(de::Error::custom)
+            }
+            fn visit_i128<E: de::Error>(self, v: i128) -> Result<u128, E> {
+                u128::try_from(v).map_err(de::Error::custom)
+            }
+            fn visit_string<E: de::Error>(self, s: String) -> Result<u128, E> {
+                s.parse::<u128>().map_err(de::Error::custom)
+            }
+        }
+        // `deserialize_any` lets us accept both JSON number and JSON string
+        // forms; the Content-buffered path used by tagged enums will dispatch
+        // to whichever one survived buffering.
+        d.deserialize_any(V)
+    }
+}
+
 /// Serde adapter for `Option<[u8; 32]>` -> hex string or null.
 ///
 /// Use as `#[serde(with = "crate::serde_helpers::opt_hex", default)]`.

@@ -9,10 +9,10 @@ fn fixture_path() -> PathBuf {
 }
 
 #[test]
-fn governance_fixture_yields_four_facts_via_integration() {
+fn governance_fixture_yields_five_facts_via_integration() {
     let cbor = fs::read(fixture_path()).unwrap();
     let out = ingest_governance(&cbor).unwrap();
-    assert_eq!(out.facts.len(), 4);
+    assert_eq!(out.facts.len(), 5);
 }
 
 #[test]

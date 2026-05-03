@@ -167,7 +167,7 @@ mod tests {
         // Minimal valid input for each sub-tree (1 entry each).
         fs::write(
             dir.join("utxo.json"),
-            r#"{"utxos":[{"tx_id":"0101010101010101010101010101010101010101010101010101010101010101","output_index":0,"address_hash":"0202020202020202020202020202020202020202020202020202020202020202","value_lovelace":1,"assets":[],"datum_hash":null}]}"#,
+            r#"{"utxos":[{"tx_id":"0101010101010101010101010101010101010101010101010101010101010101","output_index":0,"address":"6102020202020202020202020202020202020202020202020202020202020202","value_lovelace":1,"assets":[],"datum_option":{"kind":"none"},"script_ref":null}]}"#,
         )
         .unwrap();
         fs::write(
@@ -192,12 +192,12 @@ mod tests {
         .unwrap();
         fs::write(
             dir.join("stake.json"),
-            r#"{"stake_entries":[{"stake_credential_hash":"11000000000000000000000000000000000000000000000000000000","delegated_pool":"00000000000000000000000000000000000000000000000000000000","delegated_drep":"00000000000000000000000000000000000000000000000000000000","rewards_lovelace":0,"is_pool_operator":0}]}"#,
+            r#"{"stake_entries":[{"stake_credential_hash":"11000000000000000000000000000000000000000000000000000000","delegated_pool":"00000000000000000000000000000000000000000000000000000000","delegated_drep":{"kind":"none"},"rewards_lovelace":0,"is_pool_operator":0}]}"#,
         )
         .unwrap();
         fs::write(
             dir.join("governance.json"),
-            r#"{"facts":[{"kind":0,"key":"0000000000000000000000000000000000000000000000000000000000000000","value":1,"slot":1}]}"#,
+            r#"{"facts":[{"kind":"treasury","key":"0000000000000000000000000000000000000000000000000000000000000000","value":1,"slot":1}]}"#,
         )
         .unwrap();
     }
@@ -293,7 +293,7 @@ mod tests {
         // Tamper with one input file.
         fs::write(
             dir.path().join("utxo.json"),
-            r#"{"utxos":[{"tx_id":"0101010101010101010101010101010101010101010101010101010101010101","output_index":0,"address_hash":"0202020202020202020202020202020202020202020202020202020202020202","value_lovelace":99999,"assets":[],"datum_hash":null}]}"#,
+            r#"{"utxos":[{"tx_id":"0101010101010101010101010101010101010101010101010101010101010101","output_index":0,"address":"6102020202020202020202020202020202020202020202020202020202020202","value_lovelace":99999,"assets":[],"datum_option":{"kind":"none"},"script_ref":null}]}"#,
         )
         .unwrap();
         let result = verify(&bundle, dir.path());

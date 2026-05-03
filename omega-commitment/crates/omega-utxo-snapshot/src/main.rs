@@ -7,6 +7,23 @@
 //! response CBOR — the same shape the patched cardano-cli would write
 //! with `--output-cbor-bin`.
 //!
+//! ## Acquisition modes
+//!
+//! - `--manifest <path>`: production / reproducible-snapshot mode. The
+//!   JSON manifest pins `(block_hash, slot, epoch, stability_depth,
+//!   stake_snapshot_select)`. The binary calls
+//!   `acquire(Some(Point::Specific(slot, hash)))` so the LSQ session is
+//!   anchored to that exact point. Stability depth must be ≥ k = 2160
+//!   (enforced by `SnapshotManifest::validate`).
+//!
+//! - `--snapshot-tip`: experimental smoke-test mode. The binary calls
+//!   `acquire(None)` and snapshots whatever the node currently treats
+//!   as tip. Prints a stderr warning so operators don't accidentally
+//!   ship a wandering-tip snapshot to consumers.
+//!
+//! - Neither flag: defaults to `--snapshot-tip` for back-compat with
+//!   v0.9.x experiments. Same warning is printed.
+//!
 //! Memory profile: pallas-network 0.30's `Client::query<_, AnyCbor>`
 //! buffers the entire response in memory before returning, so the binary
 //! holds the full UTxO CBOR (~multi-GB on mainnet) as a `Vec<u8>` before
@@ -20,6 +37,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use omega_commitment_core::snapshot_manifest::SnapshotManifest;
 use pallas_codec::utils::AnyCbor;
 use pallas_network::facades::NodeClient;
 use pallas_network::miniprotocols::localstate::queries_v16::{BlockQuery, LedgerQuery, Request};
@@ -45,6 +63,17 @@ struct Args {
     /// Output file for the raw CBOR response.
     #[arg(long)]
     out: PathBuf,
+
+    /// Path to a `SnapshotManifest` JSON pinning the chain point. When
+    /// supplied, acquisition uses `Point::Specific(slot, block_hash)`
+    /// for reproducibility. Mutually exclusive with `--snapshot-tip`.
+    #[arg(long, conflicts_with = "snapshot_tip")]
+    manifest: Option<PathBuf>,
+
+    /// Snapshot the wandering tip via `acquire(None)`. Experimental
+    /// smoke-test mode only; production runs MUST use `--manifest`.
+    #[arg(long, conflicts_with = "manifest")]
+    snapshot_tip: bool,
 }
 
 fn parse_magic(s: &str) -> Result<u64> {
@@ -58,11 +87,59 @@ fn parse_magic(s: &str) -> Result<u64> {
     })
 }
 
+/// Decide which acquisition target the LSQ session should pin.
+///
+/// Returns `Some(Point::Specific(slot, hash))` if `--manifest` was
+/// supplied; otherwise returns `None` (which `LocalStateQuery::acquire`
+/// interprets as "snapshot the wandering tip"). Emits a stderr warning
+/// in the wandering-tip case.
+fn resolve_target(
+    manifest_path: Option<&std::path::Path>,
+    snapshot_tip_flag: bool,
+) -> Result<Option<Point>> {
+    match manifest_path {
+        Some(path) => {
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("read manifest {}", path.display()))?;
+            let manifest: SnapshotManifest = serde_json::from_str(&raw)
+                .with_context(|| format!("parse manifest {}", path.display()))?;
+            manifest
+                .validate()
+                .with_context(|| format!("validate manifest {}", path.display()))?;
+            eprintln!(
+                "omega-utxo-snapshot: pinning chain point slot={} block_hash={} (epoch={}, stability_depth={})",
+                manifest.slot,
+                hex::encode(manifest.block_hash),
+                manifest.epoch,
+                manifest.stability_depth
+            );
+            Ok(Some(Point::Specific(
+                manifest.slot,
+                manifest.block_hash.to_vec(),
+            )))
+        }
+        None => {
+            if snapshot_tip_flag {
+                eprintln!(
+                    "omega-utxo-snapshot: WARNING --snapshot-tip selected; snapshotting the wandering tip via acquire(None). EXPERIMENTAL smoke-test mode — production runs must use --manifest <path>."
+                );
+            } else {
+                eprintln!(
+                    "omega-utxo-snapshot: WARNING neither --manifest nor --snapshot-tip supplied; defaulting to wandering-tip mode for back-compat with v0.9.x experiments. EXPERIMENTAL smoke-test mode — production runs must use --manifest <path>."
+                );
+            }
+            Ok(None)
+        }
+    }
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() -> Result<()> {
     let args = Args::parse();
     let magic = parse_magic(&args.network)?;
     let started = Instant::now();
+
+    let target = resolve_target(args.manifest.as_deref(), args.snapshot_tip)?;
 
     eprintln!(
         "omega-utxo-snapshot: connecting to {} (magic={}, era={})",
@@ -77,9 +154,9 @@ async fn main() -> Result<()> {
 
     let sq = client.statequery();
 
-    sq.acquire(None)
+    sq.acquire(target)
         .await
-        .context("acquire latest tip via LocalStateQuery")?;
+        .context("acquire chain point via LocalStateQuery")?;
 
     let tip: Point = pallas_network::miniprotocols::localstate::queries_v16::get_chain_point(sq)
         .await

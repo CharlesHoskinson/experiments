@@ -63,7 +63,10 @@ fn shape(v: &Value) -> String {
 fn sample_key(v: &Value) -> String {
     match v {
         Value::Object(o) => o.keys().next().cloned().unwrap_or_else(|| "<empty>".into()),
-        Value::Array(a) => a.first().map(|x| x.to_string()).unwrap_or_else(|| "<empty>".into()),
+        Value::Array(a) => a
+            .first()
+            .map(|x| x.to_string())
+            .unwrap_or_else(|| "<empty>".into()),
         Value::String(s) => s.chars().take(40).collect(),
         Value::Number(n) => n.to_string(),
         other => format!("{other:?}").chars().take(40).collect(),
@@ -83,13 +86,19 @@ fn read_vmhwm() -> u64 {
 }
 
 fn main() -> anyhow::Result<()> {
-    let path = env::args().nth(1).expect("usage: probe_ledger_state_paths <path-to-ledger.json>");
+    let path = env::args()
+        .nth(1)
+        .expect("usage: probe_ledger_state_paths <path-to-ledger.json>");
     eprintln!("probe: opening {path}");
     let started = Instant::now();
     let file = File::open(&path)?;
     let bytes = file.metadata()?.len();
     let reader = BufReader::with_capacity(8 * 1024 * 1024, file);
-    eprintln!("probe: file size {} bytes ({:.2} GiB)", bytes, bytes as f64 / (1024.0 * 1024.0 * 1024.0));
+    eprintln!(
+        "probe: file size {} bytes ({:.2} GiB)",
+        bytes,
+        bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+    );
 
     let load_started = Instant::now();
     let root: Value = serde_json::from_reader(reader)?;
@@ -115,7 +124,14 @@ fn main() -> anyhow::Result<()> {
     let final_rss = read_vmhwm();
     let total_ms = started.elapsed().as_millis();
     eprintln!();
-    eprintln!("probe: total wall {total_ms} ms ; peak VmHWM {} KiB ({:.2} GiB)", final_rss, final_rss as f64 / (1024.0 * 1024.0));
-    eprintln!("probe: ratio peak_RSS / file_size = {:.2}x", final_rss as f64 * 1024.0 / bytes as f64);
+    eprintln!(
+        "probe: total wall {total_ms} ms ; peak VmHWM {} KiB ({:.2} GiB)",
+        final_rss,
+        final_rss as f64 / (1024.0 * 1024.0)
+    );
+    eprintln!(
+        "probe: ratio peak_RSS / file_size = {:.2}x",
+        final_rss as f64 * 1024.0 / bytes as f64
+    );
     Ok(())
 }

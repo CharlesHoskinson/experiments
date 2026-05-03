@@ -1,15 +1,20 @@
 //! Stake-state sub-tree ingestion from a hand-crafted stake_snapshot.cbor.
 //!
 //! Top-level CBOR array of 5-element entries:
-//!   [ stake_credential_hash (28), delegated_pool (28),
-//!     delegated_drep (28), rewards_lovelace (u64),
+//!   [ stake_credential_hash (28),
+//!     delegated_pool (28),
+//!     delegated_drep ([tag: u8] or [tag: u8, payload: 28-byte bytes]),
+//!     rewards_lovelace (u64),
 //!     is_pool_operator (u8) ]
 //!
-//! Maps 1:1 onto `omega_commitment_core::stake_state_leaf::StakeEntry`.
+//! `delegated_drep` is encoded as a CBOR array (length 1 or 2) so the
+//! Conway-era DRep tag (None / KeyHash / ScriptHash / AlwaysAbstain /
+//! AlwaysNoConfidence) round-trips faithfully into
+//! `omega_commitment_core::stake_state_leaf::DrepDelegation`.
 
 use crate::cbor::{expect_end, read_28_bytes, read_array_len, read_u64, read_u8};
 use anyhow::Result;
-use omega_commitment_core::stake_state_leaf::StakeEntry;
+use omega_commitment_core::stake_state_leaf::{DrepDelegation, StakeEntry};
 use pallas_codec::minicbor::Decoder;
 use serde::Serialize;
 
@@ -29,7 +34,7 @@ pub fn ingest_stake(cbor: &[u8]) -> Result<StakeOutput> {
         }
         let stake_credential_hash = read_28_bytes(&mut d)?;
         let delegated_pool = read_28_bytes(&mut d)?;
-        let delegated_drep = read_28_bytes(&mut d)?;
+        let delegated_drep = read_drep(&mut d)?;
         let rewards_lovelace = read_u64(&mut d)?;
         let is_pool_operator = read_u8(&mut d)?;
         stake_entries.push(StakeEntry {
@@ -42,6 +47,70 @@ pub fn ingest_stake(cbor: &[u8]) -> Result<StakeOutput> {
     }
     expect_end(&d, cbor.len())?;
     Ok(StakeOutput { stake_entries })
+}
+
+/// Read a Conway-era DRep delegation. Wire format: `[tag: u8]`
+/// (no payload — None / AlwaysAbstain / AlwaysNoConfidence) or
+/// `[tag: u8, payload: 28-byte bytes]` (KeyHash / ScriptHash).
+///
+/// Tag table mirrors `DrepDelegation::tag_byte`:
+///   `0x00` = None, `0x01` = KeyHash, `0x02` = ScriptHash,
+///   `0x03` = AlwaysAbstain, `0x04` = AlwaysNoConfidence.
+fn read_drep(d: &mut Decoder<'_>) -> Result<DrepDelegation> {
+    let arity = read_array_len(d)?;
+    if arity == 0 || arity > 2 {
+        return Err(anyhow::anyhow!(
+            "drep array must be 1- or 2-elem, got {arity}"
+        ));
+    }
+    let tag = read_u8(d)?;
+    match tag {
+        0x00 => {
+            if arity != 1 {
+                return Err(anyhow::anyhow!(
+                    "drep tag 0x00 (None) must carry no payload, got arity {arity}"
+                ));
+            }
+            Ok(DrepDelegation::None)
+        }
+        0x01 => {
+            if arity != 2 {
+                return Err(anyhow::anyhow!(
+                    "drep tag 0x01 (KeyHash) requires 28-byte payload, got arity {arity}"
+                ));
+            }
+            Ok(DrepDelegation::KeyHash {
+                hash: read_28_bytes(d)?,
+            })
+        }
+        0x02 => {
+            if arity != 2 {
+                return Err(anyhow::anyhow!(
+                    "drep tag 0x02 (ScriptHash) requires 28-byte payload, got arity {arity}"
+                ));
+            }
+            Ok(DrepDelegation::ScriptHash {
+                hash: read_28_bytes(d)?,
+            })
+        }
+        0x03 => {
+            if arity != 1 {
+                return Err(anyhow::anyhow!(
+                    "drep tag 0x03 (AlwaysAbstain) must carry no payload, got arity {arity}"
+                ));
+            }
+            Ok(DrepDelegation::AlwaysAbstain)
+        }
+        0x04 => {
+            if arity != 1 {
+                return Err(anyhow::anyhow!(
+                    "drep tag 0x04 (AlwaysNoConfidence) must carry no payload, got arity {arity}"
+                ));
+            }
+            Ok(DrepDelegation::AlwaysNoConfidence)
+        }
+        other => Err(anyhow::anyhow!("unknown drep tag byte 0x{other:02x}")),
+    }
 }
 
 #[cfg(test)]
@@ -64,7 +133,7 @@ mod tests {
         let e = &out.stake_entries[0];
         assert_eq!(e.stake_credential_hash, [0x11; 28]);
         assert_eq!(e.delegated_pool, [0u8; 28]);
-        assert_eq!(e.delegated_drep, [0u8; 28]);
+        assert_eq!(e.delegated_drep, DrepDelegation::None);
         assert_eq!(e.rewards_lovelace, 0);
         assert_eq!(e.is_pool_operator, 0);
     }

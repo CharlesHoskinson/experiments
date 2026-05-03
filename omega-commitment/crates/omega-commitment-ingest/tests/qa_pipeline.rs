@@ -109,7 +109,7 @@ fn full_pipeline_five_sub_trees_from_cbor() {
 
     // 5) Governance sub-tree from governance_snapshot.cbor.
     let g_out = ingest_governance(&gov_cbor).unwrap();
-    assert_eq!(g_out.facts.len(), 4);
+    assert_eq!(g_out.facts.len(), 5);
     let g_leaves: Vec<_> = g_out.facts.iter().map(|f| f.leaf_hash()).collect();
     let g_root = omega_commitment_core::tree::MerkleTree::build(g_leaves).root();
     assert_ne!(g_root, [0u8; 32]);

@@ -49,9 +49,9 @@ fn golden_bundle_blake2b_root() {
     let bundle = assemble(dir.path()).unwrap();
     assert_eq!(
         hex::encode(bundle.blake2b_bundle_root),
-        // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
-        "cb9fce73c83de7281b6a0731951e0074a6f09d7131e91e46097486d8d0178f79",
-        "blake2b_bundle_root drifted from Batch 1 v1 pin"
+        // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
+        "610a19244cd84d0b249cf3a1e53ab0ad97da425c138c49ba2217545fb5b85f1b",
+        "blake2b_bundle_root drifted from Batch 2 v1 pin"
     );
 }
 
@@ -62,9 +62,9 @@ fn golden_bundle_sha3_root() {
     let bundle = assemble(dir.path()).unwrap();
     assert_eq!(
         hex::encode(bundle.sha3_bundle_root),
-        // re-pinned 2026-05-03: Batch 1 crypto soundness (A1/F001-F005)
-        "f67959dc085f83a76d403cd27b89b67e1e210dbbf150682e9e9aafae45c3606c",
-        "sha3_bundle_root drifted from Batch 1 v1 pin"
+        // re-pinned 2026-05-03: Batch 2 Cardano semantic fidelity (A2/F002, A3/F001-F005)
+        "44a2ce66a84784741b1827488256a9a298424a78018d4e0f670d5978d4bb4f75",
+        "sha3_bundle_root drifted from Batch 2 v1 pin"
     );
 }
 

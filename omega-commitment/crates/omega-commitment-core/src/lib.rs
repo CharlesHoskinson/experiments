@@ -10,6 +10,7 @@ pub mod hash;
 pub mod header_leaf;
 pub mod script_registry_leaf;
 pub mod serde_helpers;
+pub mod snapshot_manifest;
 pub mod stake_state_leaf;
 pub mod token_policy_leaf;
 pub mod tree;

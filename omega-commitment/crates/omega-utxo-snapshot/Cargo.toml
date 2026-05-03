@@ -13,6 +13,9 @@ path = "src/main.rs"
 clap.workspace = true
 anyhow = "1"
 hex.workspace = true
+omega-commitment-core = { path = "../omega-commitment-core" }
 pallas-network = "0.30"
 pallas-codec = "0.30"
+serde.workspace = true
+serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"] }
