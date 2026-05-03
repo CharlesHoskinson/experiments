@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/omega-commitment-core",
+  "crates/omega-commitment-cli",
+  "crates/omega-commitment-bundle",
+  "crates/omega-commitment-ingest",
+  "crates/omega-utxo-snapshot",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.79"
+license = "Apache-2.0"
+repository = "https://github.com/IntersectMBO/omega-commitment"
+
+[workspace.dependencies]
+blake2 = "0.10"
+sha3 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+clap = { version = "4", features = ["derive"] }
+proptest = "1"
+criterion = "0.5"

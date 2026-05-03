@@ -1,0 +1,18 @@
+[package]
+name = "omega-utxo-snapshot"
+version = "0.9.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "omega-utxo-snapshot"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+anyhow = "1"
+hex.workspace = true
+pallas-network = "0.30"
+pallas-codec = "0.30"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"] }

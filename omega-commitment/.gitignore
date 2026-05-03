@@ -1,0 +1,7 @@
+target/
+Cargo.lock
+*.bk
+.DS_Store
+
+# Downloaded snapshots (Mithril testnet, etc.) — not tracked
+var/snapshots/

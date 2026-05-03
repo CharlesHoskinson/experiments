@@ -1,0 +1,130 @@
+# Skill bundle manifest for the experiments repo
+#
+# Read by install.sh. Declares every Claude Code skill, plugin reference,
+# cargo binary, and rustup component this project depends on. To
+# reproduce the setup on a new machine: clone this repo, run
+# `./skills/install.sh`, then run the two `/plugin` commands at the
+# bottom of this file inside Claude Code.
+#
+# Each [[skill.<source-type>]] entry installs a single skill at
+# ~/.claude/skills/<name>/.
+
+# ---------------------------------------------------------------------------
+# Local skills (vendored in this repo)
+# ---------------------------------------------------------------------------
+
+[[skill.local]]
+name = "plonky3-friendly-rust"
+src  = "local/plonky3-friendly-rust"
+
+# ---------------------------------------------------------------------------
+# Single-file SKILL.md skills (clone repo, copy SKILL.md from root)
+# ---------------------------------------------------------------------------
+
+[[skill.git_root]]
+name = "humanizer"
+repo = "https://github.com/blader/humanizer"
+
+[[skill.git_root]]
+name = "rust-skills"
+repo = "https://github.com/leonardomso/rust-skills"
+
+# ---------------------------------------------------------------------------
+# Skills nested inside a repo (clone repo, copy a subdirectory)
+# ---------------------------------------------------------------------------
+
+[[skill.git_subpath]]
+name    = "ascii-visualizer"
+repo    = "https://github.com/ArieGoldkin/devPrepAi"
+subpath = ".claude/skills/ascii-visualizer"
+
+[[skill.git_subpath]]
+name    = "rust-engineer"
+repo    = "https://github.com/Jeffallan/claude-skills"
+subpath = "skills/rust-engineer"
+
+[[skill.git_subpath]]
+name    = "code-reviewer"
+repo    = "https://github.com/Jeffallan/claude-skills"
+subpath = "skills/code-reviewer"
+
+[[skill.git_subpath]]
+name    = "test-master"
+repo    = "https://github.com/Jeffallan/claude-skills"
+subpath = "skills/test-master"
+
+[[skill.git_subpath]]
+name    = "security-reviewer"
+repo    = "https://github.com/Jeffallan/claude-skills"
+subpath = "skills/security-reviewer"
+
+[[skill.git_subpath]]
+name    = "debugging-wizard"
+repo    = "https://github.com/Jeffallan/claude-skills"
+subpath = "skills/debugging-wizard"
+
+[[skill.git_subpath]]
+name    = "architecture-designer"
+repo    = "https://github.com/Jeffallan/claude-skills"
+subpath = "skills/architecture-designer"
+
+# ---------------------------------------------------------------------------
+# Bulk-install: every subdirectory of a path becomes a skill
+# (each subdir must contain its own SKILL.md)
+#
+# All actionbook sub-skills are installed under ~/.claude/skills/ab-<name>
+# to avoid name collisions with other skill collections.
+# ---------------------------------------------------------------------------
+
+[[skill.git_bulk]]
+prefix  = "ab-"
+repo    = "https://github.com/actionbook/rust-skills"
+subpath = "skills"
+
+# ---------------------------------------------------------------------------
+# Claude Code plugins (manual, not script-installable)
+#
+# Plugins must be activated through `/plugin` slash commands inside
+# Claude Code; the harness blocks programmatic edits to settings.json.
+# install.sh prints these at the end of its run.
+# ---------------------------------------------------------------------------
+
+[[plugin]]
+name        = "superpowers"
+marketplace = "obra/superpowers-marketplace"
+note        = "main superpowers plugin (writing-plans, brainstorming, executing-plans, etc.)"
+
+[[plugin]]
+name        = "wiki-skills-v2"
+marketplace = "kfchou/wiki-skills"
+note        = "wiki maintenance (wiki-init, wiki-ingest, wiki-lint, wiki-query, etc.)"
+
+# ---------------------------------------------------------------------------
+# Cargo binaries (installed via cargo install)
+# ---------------------------------------------------------------------------
+
+[[cargo_install]]
+name = "cargo-fuzz"
+
+[[cargo_install]]
+name = "cargo-mutants"
+
+[[cargo_install]]
+name = "kani-verifier"
+post-install = "cargo kani setup"
+
+[[cargo_install]]
+name = "cargo-nextest"
+
+# ---------------------------------------------------------------------------
+# Rustup components and toolchains
+# ---------------------------------------------------------------------------
+
+[[rustup_component]]
+toolchain = "stable"
+components = ["clippy", "rustfmt", "rust-src", "llvm-tools-preview"]
+
+[[rustup_component]]
+toolchain = "nightly"
+components = ["miri", "rust-src"]
+note = "miri requires nightly"

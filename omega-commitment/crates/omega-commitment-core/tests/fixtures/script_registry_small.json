@@ -1,0 +1,52 @@
+{
+  "scripts": [
+    {
+      "script_hash": "11000000000000000000000000000000000000000000000000000000",
+      "deployment_slot": 100,
+      "script_size_bytes": 256,
+      "language": 0
+    },
+    {
+      "script_hash": "22000000000000000000000000000000000000000000000000000000",
+      "deployment_slot": 200,
+      "script_size_bytes": 1024,
+      "language": 1
+    },
+    {
+      "script_hash": "33000000000000000000000000000000000000000000000000000000",
+      "deployment_slot": 350,
+      "script_size_bytes": 2048,
+      "language": 2
+    },
+    {
+      "script_hash": "44000000000000000000000000000000000000000000000000000000",
+      "deployment_slot": 400,
+      "script_size_bytes": 4096,
+      "language": 3
+    },
+    {
+      "script_hash": "55000000000000000000000000000000000000000000000000000000",
+      "deployment_slot": 500,
+      "script_size_bytes": 512,
+      "language": 0
+    },
+    {
+      "script_hash": "66000000000000000000000000000000000000000000000000000000",
+      "deployment_slot": 700,
+      "script_size_bytes": 8192,
+      "language": 2
+    },
+    {
+      "script_hash": "77000000000000000000000000000000000000000000000000000000",
+      "deployment_slot": 1000,
+      "script_size_bytes": 16384,
+      "language": 3
+    },
+    {
+      "script_hash": "88000000000000000000000000000000000000000000000000000000",
+      "deployment_slot": 1500,
+      "script_size_bytes": 32,
+      "language": 1
+    }
+  ]
+}

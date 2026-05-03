@@ -1,0 +1,30 @@
+[package]
+name = "omega-commitment-ingest"
+version = "0.9.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "omega_commitment_ingest"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omega-ingest"
+path = "src/main.rs"
+
+[dependencies]
+omega-commitment-core = { path = "../omega-commitment-core" }
+clap.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+anyhow = "1"
+pallas-codec = "0.30"
+pallas-primitives = "0.30"
+pallas-traverse = "0.30"
+
+[dev-dependencies]
+tempfile = "3"
+omega-commitment-bundle = { path = "../omega-commitment-bundle" }

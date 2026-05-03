@@ -1,0 +1,22 @@
+[package]
+name = "omega-commitment-core"
+version = "0.9.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+blake2.workspace = true
+sha3.workspace = true
+serde.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "tree"
+harness = false
