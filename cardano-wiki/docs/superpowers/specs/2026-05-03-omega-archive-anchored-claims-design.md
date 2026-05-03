@@ -8,11 +8,12 @@
 
 1. **No master keys, no court override, no escrow keys, no designated-viewer master.** No mechanism in the protocol grants disclosure of an address's data without the holder's voluntary cooperation. By symmetry, this means no jurisdiction can compel disclosure via the protocol; compliance happens at the application layer between consenting counterparties.
 2. **All primitives post-quantum.** No curve operations anywhere in build, verify, or leaf encoding. Hash functions: Blake2b-256 + SHA3-256 + Poseidon2 (in-circuit). Signatures: hash-based (SLH-DSA / SPHINCS+ family) for authority-grade ops; ML-DSA / FN-DSA permitted for high-throughput user signing per the Cloudflare 2025 analysis. Threshold: hash-based aggregation (leanXMSS / leanMultisig family); no BLS.
-3. **Plonky3-friendly throughout.** Every operation expressible as STARK constraints without curve gadgets. Inner Merkle hash = Poseidon2 in-circuit; Blake2b/SHA3 only at interop boundaries.
+3. **Plonky3-friendly throughout.** Every operation expressible as STARK constraints without curve gadgets. Inner Merkle hash = Poseidon2 in-circuit; Blake2b/SHA3 only at interop boundaries. Goldilocks field underneath.
 4. **Crypsinous-PQ consensus.** Ouroboros Crypsinous (Kerber-Kiayias-Kohlweiss-Zikas, eprint 2018/1132) updated for the privacy infrastructure specified here. Shielded VRF, shielded stake, shielded rewards. Encrypted mempool natively (not bolted on).
-5. **Holder-sovereign disclosure.** PLUME-style nullifiers, holder-controlled viewing keys, holder-curated non-membership proofs against association sets the holder picks. The protocol has no association set.
-6. **Genesis = mass-MPC ceremony, not a publication event.** Cardano stake-weighted; soundness requires only one honest participant who re-derives from block 0.
-7. **The chain has the resolution machinery; holders bring their own proofs.** No mandated mirror network. Snapshot data lives wherever holders, communities, and economically-incentivised mirrors choose to host it. The protocol incentivises replication via storage-proof bounties without designating any operator.
+5. **Starstream as native UTXO + zkVM layer.** [LFDT-Nightstream/Starstream](https://github.com/LFDT-Nightstream/Starstream) is Omega's smart-contract execution model and the destination shape of every claim_utxo output. UTXO-based (EUTXO mental model survives), coroutine-primitive, Goldilocks + Poseidon2 (the exact primitives §3 already mandates), native folding for both variable updates and function application. See §15.
+6. **Holder-sovereign disclosure.** PLUME-style nullifiers, holder-controlled viewing keys, holder-curated non-membership proofs against association sets the holder picks. The protocol has no association set.
+7. **Genesis = mass-MPC ceremony, not a publication event.** Cardano stake-weighted; soundness requires only one honest participant who re-derives from block 0.
+8. **The chain has the resolution machinery; holders bring their own proofs.** No mandated mirror network. Snapshot data lives wherever holders, communities, and economically-incentivised mirrors choose to host it. The protocol incentivises replication via storage-proof bounties without designating any operator.
 
 ## 1. Cryptographic primitives
 
@@ -281,7 +282,50 @@ A critical PQ-Crypsinous bug discovered post-genesis cannot wait for a 70-day Te
 
 Steemit precedent is explicit: ~$70M market cap in Feb 2020 made capture economically trivial. Cardano's ~$15B market cap puts 33% acquisition at ~$5B nominal / ~$15-25B real. Tezos has had no successful capture in seven years. The §13.1 guardrails script makes the prize hollow even if capture succeeds — an attacker holding 100% of stake still cannot add a backdoor parameter. They can only chain-replace, which the wallet ecosystem will reject.
 
-## 14. Open issues
+## 14. Starstream as Omega's native UTXO + zkVM layer
+
+[LFDT-Nightstream/Starstream](https://github.com/LFDT-Nightstream/Starstream) is the smart-contract execution model that the post-claim side of Omega runs on. Three properties make it a load-bearing choice rather than a swap-out option:
+
+| Starstream property | Why it composes with the rest of the spec |
+|---|---|
+| Goldilocks field + Poseidon2 hash | Exactly the primitives §3 mandates for in-circuit operations. Zero-friction: the same hash that builds the Ω-Commitment Merkle tree is the same hash that Starstream commits state under. No translation layer. |
+| UTXO-based with coroutines | EUTXO mental model survives the migration. Cardano-era UTxOs (committed in the §2 UTXO sub-tree) translate naturally into Starstream UTxOs at claim time. Coroutines provide the multi-step / atomic-bundle / time-locked / dead-man's-switch claim primitives §4.3 + C3 wanted, natively at the VM layer. |
+| Native folding scheme support | Multiple claims by the same holder (claim_utxo + claim_stake + claim_governance for the same credential) fold into a single recursive proof. The atomic-bundle-claim primitive §4.3 wanted is built in, not bolted on. |
+| zkVM with off-chain execution sealed in succinct proofs | Composes with PQ-Crypsinous's encrypted mempool: claim transactions carry the Starstream proof; consensus verifies; the on-chain footprint is constant-size regardless of computation depth. |
+| LFDT governance | Linux Foundation Decentralized Trust (formerly Hyperledger). No single-vendor capture. Mature open-source pattern. |
+| WebAssembly compilation target | Wallet, browser, mobile claim-execution paths inherit a mature toolchain. VSCode + Zed extensions already shipping; tooling not a blocker. |
+
+### 14.1 What Starstream changes about the rest of the spec
+
+**§2 UTXO sub-tree leaf encoding stays as is.** The Cardano-era UTxOs are the historical record; their leaf format is locked by Cardano's CDDL. Starstream is the *destination* shape, not a re-encoding of history.
+
+**§4.1 verifier circuit obligations gain a translation step.** After step 5 (PLUME nullifier emission), the circuit produces a Starstream UTxO `(coroutine_id, amount, datum, recipient_view_key)` as a public output. The Starstream UTxO commits to the holder's Cardano-era position under Poseidon2 — the same hash family the inner Merkle tree uses, so verification is one circuit, not two.
+
+**§4.3 per-claim-type assignment policy gets sharper.** `claim_script` no longer needs the "registered deployer key OR governance-arbitrated dispute" two-path: instead, the holder submits a Starstream coroutine that proves semantic equivalence to the original Plutus script. Plutus → Starstream translation is a community / compiler-team responsibility (separate research project — see [`runtimeverification/plutus-core-semantics`](https://github.com/runtimeverification/plutus-core-semantics)), but the protocol surface accepts any Starstream coroutine that produces an equivalent script-hash. dApp redeployment becomes "submit a Starstream module that the verifier accepts," not "negotiate with a foundation arbitrator."
+
+**§4.4 claim cutoff couples to Starstream's folding scheme.** Unclaimed pre-fork UTxOs at cutoff fold into a single Starstream coroutine that the protocol treasury controls (per §6.3 archival-bounty allocation). No custodial escrow; the fold is mechanical.
+
+**§7 PQ-Crypsinous integration becomes two-layer.** Crypsinous shields the consensus (VRF, stake, rewards). Starstream shields the execution (state, computation, transitions). The two layers compose by sharing the same threshold-encryption committee for mempool decryption: the per-epoch stake-weighted committee decrypts both Crypsinous-encrypted ordering inputs AND Starstream-encrypted state-transition payloads.
+
+**§9 wallet requirements expand.** Wallets must construct + sign Starstream coroutine instantiations, not just Cardano-shaped Tx outputs. The mature tooling (VSCode + Zed extensions, web sandbox, CLI) is the foundation; canonical claim-wallet derives from it.
+
+### 14.2 What Starstream does NOT solve
+
+- The hash-based VRF construction (§15 open issue #1) is still a research-paper-shaped gap. Starstream does not specify a VRF.
+- The lattice-vs-hash signature decision (§15 open issue #2) is orthogonal. Starstream is signature-agnostic.
+- The mass-MPC genesis ceremony (§3) is not in Starstream's scope. Starstream is the post-claim execution layer; the pre-fork commitment is computed and ceremonially attested separately.
+
+### 14.3 Implementation status (as of 2026-05-03)
+
+Starstream is in active design with implementation experiments. Per the upstream README and the [impl-plan.md](https://github.com/LFDT-Nightstream/Starstream/blob/main/impl-plan.md): compiler + interpreter + WebAssembly target shipping; type checker, IVC, MCC, and lookups modules marked TODO. This is consistent with Omega's program timeline — Starstream maturity tracks the T6 verifier and T3 smart-contract VM tracks, not T1 commitment tooling. The T1 work in `experiments/omega-commitment/` is unchanged by this addition; the integration happens at T3 / T6 in parallel.
+
+### 14.4 Updated comparison against current work (replaces §12 row "T3 smart-contract VM")
+
+| Spec section | Current implementation status | Required deltas to align |
+|---|---|---|
+| §14 Starstream as native UTXO + zkVM | ❌ Not implemented (Starstream is upstream, in active development) | T3 track is now defined as: integrate LFDT-Nightstream/Starstream + extend with PQ-Crypsinous shielding hooks. Track T3 was previously open; it now has a concrete upstream dependency and a clear scope boundary. |
+
+## 15. Open issues
 
 These remain unresolved and gate v2.0 publication readiness:
 
@@ -290,6 +334,8 @@ These remain unresolved and gate v2.0 publication readiness:
 3. **Threshold-encryption committee composition under PQ.** Per-epoch stake-weighted committee is the obvious answer; the specific PQ threshold scheme (lattice-based vs hash-based) is undecided.
 4. **Claim-window length.** 5 vs 7 vs 10 vs 20 years. Trade-off: shorter = quantum-pre-fork-Ed25519 safety + extraction-window compression. Longer = vault-holder forgiveness. Empirical anchor: Mt Gox 10-year wait was operationally tolerable.
 5. **Guardrails-script entrenchment depth.** Whether the §13.1 guardrails script update path is forbidden entirely or requires a higher-than-supermajority quorum (e.g. 90% DRep + 90% SPO + unanimous CC). The latter preserves a theoretical escape hatch but creates a target. The former is cleaner but assumes any future need to update the guardrails will route through chain replacement.
+6. **Plutus → Starstream translation.** §14.1 punts the translation of Cardano-era Plutus scripts into Starstream coroutines to a community / compiler-team responsibility. Specific decision points: which Plutus Core semantics (the [RuntimeVerification K-spec](https://github.com/runtimeverification/plutus-core-semantics) or the Agda formal-ledger spec) is the source-of-truth; whether translation is automated or holder-submitted; whether script-hash-equivalence is verified by the protocol or attested via dApp re-deployment.
+7. **Starstream's IVC / MCC / lookups upstream maturity.** Per the upstream impl-plan.md, these are marked TODO. Omega's T3 / T6 tracks depend on these landing. Tracking via upstream rather than re-implementing.
 
 ## Self-review
 
