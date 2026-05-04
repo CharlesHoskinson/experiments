@@ -1,7 +1,9 @@
 use omega_claim_prover::{
-    prove_collection, MembershipWitness, OmegaCommitment, ProverConfig, ProverError,
+    prove_collection, prove_collection_with_trace_tamper, MembershipWitness, OmegaCommitment,
+    ProverConfig, TraceTamper,
 };
 use omega_claim_tx::ClaimPublicInputs;
+use omega_claim_verifier::verify;
 use omega_commitment_core::{
     hash::{blake3_256, Hash},
     tree::{leaf_hash_v2, MerkleTree},
@@ -45,7 +47,7 @@ fn commitment_for(
     }
 }
 
-fn witness_at(index: usize) -> (OmegaCommitment, MembershipWitness) {
+fn fixture_at(index: usize) -> (OmegaCommitment, MembershipWitness) {
     let payloads = payloads(256);
     let tree = MerkleTree::build_v1(SUB_TREE_ID_UTXO, payloads.clone()).unwrap();
     let payload = payloads[index].clone();
@@ -68,40 +70,32 @@ fn witness_at(index: usize) -> (OmegaCommitment, MembershipWitness) {
 }
 
 #[test]
-fn prove_collection_produces_non_empty_plonky3_proof_for_256_leaf_tree() {
-    let (commitment, witness) = witness_at(42);
+fn verifier_rejects_air_column_mutations_after_proving() {
+    let (commitment, witness) = fixture_at(42);
+    let public_inputs = vec![witness.public.clone()];
+    let config = ProverConfig::default();
 
-    let proof = prove_collection(&commitment, &[witness], &ProverConfig::default()).expect("proof");
+    let honest = prove_collection(&commitment, std::slice::from_ref(&witness), &config)
+        .expect("honest proof");
+    verify(&commitment, &public_inputs, &honest).expect("honest proof verifies");
 
-    assert!(proof.0.len() > 128);
-}
+    for tamper in [
+        TraceTamper::PayloadByte,
+        TraceTamper::SiblingByte,
+        TraceTamper::CurrentNodeByte,
+        TraceTamper::LeafIndexByte,
+    ] {
+        let proof = prove_collection_with_trace_tamper(
+            &commitment,
+            std::slice::from_ref(&witness),
+            &config,
+            tamper,
+        )
+        .expect("tampered trace still produces a proof object");
 
-#[test]
-fn prove_collection_rejects_wrong_path_before_emitting_proof() {
-    let (commitment, mut witness) = witness_at(42);
-    witness.merkle_path[0][0] ^= 0x01;
-
-    let err = prove_collection(&commitment, &[witness], &ProverConfig::default()).unwrap_err();
-
-    assert!(matches!(
-        err,
-        ProverError::PathMismatch { witness_index: 0 }
-    ));
-}
-
-#[test]
-fn prove_collection_rejects_payloads_past_v01_leaf_bound() {
-    let (commitment, mut witness) = witness_at(42);
-    witness.leaf_payload = vec![0xAA; 35];
-
-    let err = prove_collection(&commitment, &[witness], &ProverConfig::default()).unwrap_err();
-
-    assert!(matches!(
-        err,
-        ProverError::LeafTooLargeForV01 {
-            actual: 65,
-            limit: 64,
-            witness_index: 0,
-        }
-    ));
+        assert!(
+            verify(&commitment, &public_inputs, &proof).is_err(),
+            "verifier accepted proof with {tamper:?} mutation"
+        );
+    }
 }

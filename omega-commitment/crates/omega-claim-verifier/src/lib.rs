@@ -3,12 +3,13 @@
 //! Pure verifier for v0.1 Ω-Commitment membership proof envelopes.
 
 use omega_claim_prover::{
-    proof_binding_words, OmegaCommitment, OmegaMembershipAir, ProofEnvelope,
-    PROOF_BINDING_WORD_OFFSET, PROOF_PUBLIC_VALUE_COUNT,
+    proof_airs, proof_binding_words, OmegaCommitment, ProofEnvelope, PROOF_BINDING_WORD_OFFSET,
+    PROOF_ENVELOPE_VERSION, PROOF_PUBLIC_VALUE_COUNT, PUBLIC_LEAF_INDEX_OFFSET, PUBLIC_ROOT_OFFSET,
+    PUBLIC_SUB_TREE_ID_OFFSET, PUBLIC_TREE_DEPTH_OFFSET,
 };
 use omega_claim_tx::{ClaimPublicInputs, ProofBytes};
 use p3_baby_bear::{BabyBear, Poseidon2BabyBear};
-use p3_blake3_air::Blake3Air;
+use p3_batch_stark::{verify_batch, BatchProof, ProverData};
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_field::{extension::BinomialExtensionField, Field, PrimeCharacteristicRing};
@@ -16,12 +17,10 @@ use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_monty_31::dft::RecursiveDft;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_uni_stark::{verify as verify_stark, Proof, StarkConfig};
+use p3_uni_stark::StarkConfig;
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use thiserror::Error;
-
-const PROOF_ENVELOPE_VERSION: u8 = 1;
 
 type Val = BabyBear;
 type Challenge = BinomialExtensionField<Val, 4>;
@@ -52,8 +51,18 @@ pub enum VerifyError {
     CommitmentMismatch,
     #[error("proof public inputs do not match verifier public inputs")]
     PublicInputMismatch,
+    #[error("public input {index} references unknown sub-tree id {sub_tree_id}")]
+    UnknownSubTree { index: usize, sub_tree_id: u8 },
     #[error("public input {index} bundle root does not match the verifier commitment")]
     PublicBundleRootMismatch { index: usize },
+    #[error("public input {index} per-sub-tree root does not match the verifier commitment")]
+    WrongSubTreeRoot { index: usize },
+    #[error("public input {index} tree depth mismatch: expected {expected}, actual {actual}")]
+    DepthMismatch {
+        index: usize,
+        expected: u8,
+        actual: u8,
+    },
     #[error("invalid Plonky3 proof")]
     InvalidProof,
 }
@@ -77,53 +86,107 @@ pub fn verify(
     if envelope.public_inputs != public_inputs {
         return Err(VerifyError::PublicInputMismatch);
     }
+    validate_public_inputs(commitment, public_inputs)?;
+    validate_envelope_public_values(commitment, public_inputs, &envelope.public_values)?;
+    verify_membership_batch(&envelope)
+}
+
+fn validate_public_inputs(
+    commitment: &OmegaCommitment,
+    public_inputs: &[ClaimPublicInputs],
+) -> Result<(), VerifyError> {
     for (index, public) in public_inputs.iter().enumerate() {
         if public.bundle_root_blake3 != commitment.bundle_root_blake3 {
             return Err(VerifyError::PublicBundleRootMismatch { index });
         }
+        let sub_tree_index =
+            sub_tree_index(public.sub_tree_id).ok_or(VerifyError::UnknownSubTree {
+                index,
+                sub_tree_id: public.sub_tree_id,
+            })?;
+        if public.per_sub_tree_root != commitment.sub_tree_roots_blake3[sub_tree_index] {
+            return Err(VerifyError::WrongSubTreeRoot { index });
+        }
+        let expected = u8::try_from(commitment.tree_depths[sub_tree_index])
+            .map_err(|_| VerifyError::InvalidProof)?;
+        if public.tree_depth != expected {
+            return Err(VerifyError::DepthMismatch {
+                index,
+                expected,
+                actual: public.tree_depth,
+            });
+        }
     }
-    if envelope.public_values[PROOF_BINDING_WORD_OFFSET..]
-        != proof_binding_words(commitment, public_inputs)
-    {
-        return Err(VerifyError::InvalidProof);
-    }
-
-    verify_membership_proof(&envelope)?;
-    verify_blake3_compression_proof(&envelope)?;
-
     Ok(())
 }
 
-fn verify_membership_proof(envelope: &ProofEnvelope) -> Result<(), VerifyError> {
-    let proof: Proof<OmegaStarkConfig> =
-        postcard::from_bytes(&envelope.stark_proof).map_err(|_| VerifyError::InvalidProof)?;
-    let trace_height = trace_height(&proof)?;
-    let config = make_stark_config(trace_height, envelope.config.rng_seed);
-    verify_stark(
-        &config,
-        &OmegaMembershipAir,
-        &proof,
-        &public_values_as_fields(envelope.public_values),
-    )
-    .map_err(|_| VerifyError::InvalidProof)
-}
-
-fn verify_blake3_compression_proof(envelope: &ProofEnvelope) -> Result<(), VerifyError> {
-    let proof: Proof<OmegaStarkConfig> = postcard::from_bytes(&envelope.blake3_compression_proof)
-        .map_err(|_| VerifyError::InvalidProof)?;
-    let trace_height = trace_height(&proof)?;
-    let config = make_stark_config(trace_height, envelope.config.rng_seed);
-    verify_stark(&config, &Blake3Air {}, &proof, &[]).map_err(|_| VerifyError::InvalidProof)
-}
-
-fn trace_height(proof: &Proof<OmegaStarkConfig>) -> Result<usize, VerifyError> {
-    if proof.degree_bits >= usize::BITS as usize {
+fn validate_envelope_public_values(
+    commitment: &OmegaCommitment,
+    public_inputs: &[ClaimPublicInputs],
+    public_values: &[Vec<u32>],
+) -> Result<(), VerifyError> {
+    if public_values.len() != public_inputs.len() {
         return Err(VerifyError::InvalidProof);
     }
-    Ok(1usize << proof.degree_bits)
+    let binding_words = proof_binding_words(commitment, public_inputs);
+    for (values, public) in public_values.iter().zip(public_inputs) {
+        if values.len() != PROOF_PUBLIC_VALUE_COUNT {
+            return Err(VerifyError::InvalidProof);
+        }
+        if values[PUBLIC_SUB_TREE_ID_OFFSET] != u32::from(public.sub_tree_id) {
+            return Err(VerifyError::InvalidProof);
+        }
+        for (offset, byte) in public.leaf_index.to_be_bytes().iter().enumerate() {
+            if values[PUBLIC_LEAF_INDEX_OFFSET + offset] != u32::from(*byte) {
+                return Err(VerifyError::InvalidProof);
+            }
+        }
+        if values[PUBLIC_TREE_DEPTH_OFFSET] != u32::from(public.tree_depth) {
+            return Err(VerifyError::InvalidProof);
+        }
+        for (offset, byte) in public.per_sub_tree_root.iter().enumerate() {
+            if values[PUBLIC_ROOT_OFFSET + offset] != u32::from(*byte) {
+                return Err(VerifyError::InvalidProof);
+            }
+        }
+        if values[PROOF_BINDING_WORD_OFFSET..] != binding_words {
+            return Err(VerifyError::InvalidProof);
+        }
+    }
+    Ok(())
 }
 
-fn make_stark_config(trace_height: usize, rng_seed: u64) -> OmegaStarkConfig {
+fn verify_membership_batch(envelope: &ProofEnvelope) -> Result<(), VerifyError> {
+    let proof: BatchProof<OmegaStarkConfig> =
+        postcard::from_bytes(&envelope.stark_proof).map_err(|_| VerifyError::InvalidProof)?;
+    let mut airs = proof_airs(envelope.public_inputs.len());
+    if proof.degree_bits.len() != airs.len() {
+        return Err(VerifyError::InvalidProof);
+    }
+    let public_values = envelope
+        .public_values
+        .iter()
+        .map(|values| {
+            values
+                .iter()
+                .copied()
+                .map(Val::from_u32)
+                .collect::<Vec<_>>()
+        })
+        .chain(core::iter::once(Vec::new()))
+        .collect::<Vec<_>>();
+    let config = make_stark_config(envelope.config.rng_seed);
+    let prover_data = ProverData::from_airs_and_degrees(&config, &mut airs, &proof.degree_bits);
+    verify_batch(&config, &airs, &proof, &public_values, &prover_data.common)
+        .map_err(|_| VerifyError::InvalidProof)
+}
+
+fn sub_tree_index(sub_tree_id: u8) -> Option<usize> {
+    let index = sub_tree_id.checked_sub(1)? as usize;
+    (index < 7).then_some(index)
+}
+
+fn make_stark_config(rng_seed: u64) -> OmegaStarkConfig {
     let mut rng = SmallRng::seed_from_u64(rng_seed);
     let perm16 = Perm16::new_from_rng_128(&mut rng);
     let perm24 = Perm24::new_from_rng_128(&mut rng);
@@ -132,14 +195,7 @@ fn make_stark_config(trace_height: usize, rng_seed: u64) -> OmegaStarkConfig {
     let val_mmcs = ValMmcs::new(hash, compress, 3);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let fri_params = FriParameters::new_benchmark_high_arity(challenge_mmcs);
-    let dft = Dft::new(trace_height << 1);
-    let pcs = Pcs::new(dft, val_mmcs, fri_params);
+    let pcs = Pcs::new(Dft::default(), val_mmcs, fri_params);
     let challenger = Challenger::new(perm24);
     OmegaStarkConfig::new(pcs, challenger)
-}
-
-fn public_values_as_fields(
-    values: [u32; PROOF_PUBLIC_VALUE_COUNT],
-) -> [Val; PROOF_PUBLIC_VALUE_COUNT] {
-    values.map(Val::from_u32)
 }

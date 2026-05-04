@@ -62,6 +62,8 @@ fn proof_fixture(count: usize) -> (OmegaCommitment, Vec<ClaimPublicInputs>, Proo
         let public = ClaimPublicInputs {
             sub_tree_id: SUB_TREE_ID_UTXO,
             leaf_index: index as u64,
+            tree_depth: tree.depth() as u8,
+            per_sub_tree_root: tree.root(),
             bundle_root_blake3: commitment.bundle_root_blake3,
             nullifier: hash(0xA1),
             recipient_starstream_addr: hash(0xB2),

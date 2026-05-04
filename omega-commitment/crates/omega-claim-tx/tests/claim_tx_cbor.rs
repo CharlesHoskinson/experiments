@@ -7,6 +7,8 @@ fn public_inputs(leaf_index: u64) -> ClaimPublicInputs {
     ClaimPublicInputs {
         sub_tree_id: omega_commitment_core::SUB_TREE_ID_UTXO,
         leaf_index,
+        tree_depth: 8,
+        per_sub_tree_root: [0x33; 32],
         bundle_root_blake3: [0x11; 32],
         nullifier: [leaf_index as u8; 32],
         recipient_starstream_addr: [0x22; 32],
@@ -115,6 +117,8 @@ prop_compose! {
     fn arb_public_inputs()(
         sub_tree_id in 1u8..=7,
         leaf_index in any::<u64>(),
+        tree_depth in 0u8..=63,
+        per_sub_tree_root in any::<[u8; 32]>(),
         bundle_root_blake3 in any::<[u8; 32]>(),
         nullifier in any::<[u8; 32]>(),
         recipient_starstream_addr in any::<[u8; 32]>(),
@@ -122,6 +126,8 @@ prop_compose! {
         ClaimPublicInputs {
             sub_tree_id,
             leaf_index,
+            tree_depth,
+            per_sub_tree_root,
             bundle_root_blake3,
             nullifier,
             recipient_starstream_addr,

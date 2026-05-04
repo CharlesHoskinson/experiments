@@ -12,12 +12,14 @@ omega-claim-tx = { path = "../omega-claim-tx" }
 
 p3-air.workspace = true
 p3-baby-bear.workspace = true
+p3-batch-stark.workspace = true
 p3-blake3-air.workspace = true
 p3-challenger.workspace = true
 p3-commit.workspace = true
 p3-dft.workspace = true
 p3-field.workspace = true
 p3-fri.workspace = true
+p3-lookup.workspace = true
 p3-matrix.workspace = true
 p3-merkle-tree.workspace = true
 p3-monty-31.workspace = true

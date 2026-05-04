@@ -70,6 +70,8 @@ fn build_fixture() -> Fixture {
     let public = ClaimPublicInputs {
         sub_tree_id: SUB_TREE_ID_UTXO,
         leaf_index: index as u64,
+        tree_depth: tree.depth() as u8,
+        per_sub_tree_root: tree.root(),
         bundle_root_blake3: commitment.bundle_root_blake3,
         nullifier: hash(0xA1),
         recipient_starstream_addr: hash(0xB2),
@@ -136,4 +138,35 @@ fn verifier_rejects_envelope_public_inputs_rewritten_with_matching_call_args() {
     let err = verify(&fixture.commitment, &envelope.public_inputs, &proof).unwrap_err();
 
     assert_eq!(err, VerifyError::InvalidProof);
+}
+
+#[test]
+fn verifier_reports_wrong_public_sub_tree_root() {
+    let fixture = fixture();
+    let mut envelope: ProofEnvelope = postcard::from_bytes(&fixture.proof.0).unwrap();
+    envelope.public_inputs[0].per_sub_tree_root[0] ^= 0x01;
+    let proof = ProofBytes(postcard::to_allocvec(&envelope).unwrap());
+
+    let err = verify(&fixture.commitment, &envelope.public_inputs, &proof).unwrap_err();
+
+    assert_eq!(err, VerifyError::WrongSubTreeRoot { index: 0 });
+}
+
+#[test]
+fn verifier_reports_public_tree_depth_mismatch() {
+    let fixture = fixture();
+    let mut envelope: ProofEnvelope = postcard::from_bytes(&fixture.proof.0).unwrap();
+    envelope.public_inputs[0].tree_depth += 1;
+    let proof = ProofBytes(postcard::to_allocvec(&envelope).unwrap());
+
+    let err = verify(&fixture.commitment, &envelope.public_inputs, &proof).unwrap_err();
+
+    assert_eq!(
+        err,
+        VerifyError::DepthMismatch {
+            index: 0,
+            expected: fixture.public_inputs[0].tree_depth,
+            actual: envelope.public_inputs[0].tree_depth
+        }
+    );
 }
