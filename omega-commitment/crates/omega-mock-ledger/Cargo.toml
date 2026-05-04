@@ -1,0 +1,32 @@
+[package]
+name = "omega-mock-ledger"
+version = "0.11.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+cardano-tx-validation = ["dep:pallas-validate"]
+
+[dependencies]
+omega-claim-tx = { path = "../omega-claim-tx" }
+omega-claim-verifier = { path = "../omega-claim-verifier" }
+omega-commitment-core = { path = "../omega-commitment-core" }
+omega-claim-prover = { path = "../omega-claim-prover" }
+
+hex.workspace = true
+num_cpus.workspace = true
+openraft.workspace = true
+pallas-validate = { workspace = true, optional = true }
+postcard.workspace = true
+r2d2.workspace = true
+r2d2_sqlite.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+omega-claim-prover = { path = "../omega-claim-prover" }
