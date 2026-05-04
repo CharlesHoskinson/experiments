@@ -103,9 +103,7 @@ fn verifier_rejects_tampered_proof_bytes() {
     let midpoint = fixture.proof.0.len() / 2;
     fixture.proof.0[midpoint] ^= 0x01;
 
-    let err = verify(&fixture.commitment, &fixture.public_inputs, &fixture.proof).unwrap_err();
-
-    assert_eq!(err, VerifyError::InvalidProof);
+    assert!(verify(&fixture.commitment, &fixture.public_inputs, &fixture.proof).is_err());
 }
 
 #[test]

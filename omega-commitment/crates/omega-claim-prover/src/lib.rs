@@ -253,6 +253,8 @@ pub enum OmegaProofAir {
     Blake3(OmegaBlake3Air),
 }
 
+/// Returns one membership AIR per public input followed by the shared Blake3
+/// compression AIR used by the global LogUp interaction.
 pub fn proof_airs(membership_count: usize) -> Vec<OmegaProofAir> {
     let mut airs = Vec::with_capacity(membership_count + 1);
     airs.extend(
@@ -512,6 +514,8 @@ impl<F: Field> LookupAir<F> for OmegaBlake3Air {
         let local = main.current_slice();
         let flag0 = expr(local[B3_FLAGS_OFFSET]);
         let flag1 = expr(local[B3_FLAGS_OFFSET + 1]);
+        // Arithmetic OR over Blake3 flag bits: dummy padding rows have no
+        // CHUNK_START or CHUNK_END bit set, so they do not send lookup tuples.
         let multiplicity = flag0.clone() + flag1.clone() - flag0 * flag1;
         let lookup = LookupAir::register_lookup(
             self,

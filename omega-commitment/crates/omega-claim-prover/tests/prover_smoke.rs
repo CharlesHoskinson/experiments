@@ -9,6 +9,9 @@ use omega_commitment_core::{
     SUB_TREE_ID_UTXO,
 };
 
+// AIR-layer trace mutation coverage lives in soundness_negative.rs. These
+// smoke tests cover honest proof generation and prover-side witness rejection.
+
 fn hash(byte: u8) -> Hash {
     [byte; 32]
 }
