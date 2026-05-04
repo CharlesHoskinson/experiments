@@ -1,3 +1,8 @@
+#![allow(clippy::result_large_err)]
+
+// Openraft 0.9 fixes `StorageError<u64>` in the storage trait surface. This
+// module keeps that error type unboxed so the impls match upstream exactly.
+
 use std::fmt::Debug;
 use std::io::Cursor;
 use std::ops::{Bound, RangeBounds};
