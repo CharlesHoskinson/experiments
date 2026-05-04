@@ -52,7 +52,7 @@ struct Args {
     #[arg(long)]
     socket: PathBuf,
 
-    /// Network: mainnet | preview | preprod | <numeric magic>.
+    /// Network: mainnet | preview | preprod | `<numeric magic>`.
     #[arg(long, default_value = "mainnet")]
     network: String,
 

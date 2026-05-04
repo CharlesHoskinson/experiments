@@ -43,30 +43,41 @@ use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Errors returned by [`Utxo::encode`] and [`Utxo::leaf_hash`].
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum LeafError {
+    /// More than `u32::MAX` assets in the UTXO bundle.
     #[error("asset count exceeds u32::MAX")]
     AssetCountOverflow,
+    /// A single `asset_id` is longer than `u16::MAX` bytes.
     #[error("asset_id length exceeds u16::MAX")]
     AssetIdLenOverflow,
+    /// `address` bytes longer than `u16::MAX`. Mainnet addresses are
+    /// at most 57 bytes (Byron 76), so this is an upstream-data error.
     #[error("address length exceeds u16::MAX")]
     AddressLenOverflow,
+    /// Inline datum bytes longer than `u32::MAX`.
     #[error("inline datum length exceeds u32::MAX")]
     InlineDatumLenOverflow,
+    /// Script-ref bytes longer than `u32::MAX`.
     #[error("script_ref length exceeds u32::MAX")]
     ScriptRefLenOverflow,
 }
 
+/// A single native-asset entry in a UTXO bundle.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Asset {
-    /// Canonical Cardano native-asset identifier: policy_id (28 bytes) ||
-    /// asset_name (variable). The outer encoder writes this as
-    /// `(id_len: u16 BE) || asset_id || (quantity: u64 BE)`, so the
-    /// `asset_id` field carries raw concatenation — the outer `id_len`
-    /// makes inner length-prefixing unnecessary.
+    /// Canonical Cardano native-asset identifier: `policy_id (28
+    /// bytes) || asset_name (variable)`.
+    ///
+    /// The outer encoder writes this as `(id_len: u16 BE) || asset_id
+    /// || (quantity: u64 BE)`, so the `asset_id` field carries raw
+    /// concatenation — the outer `id_len` makes inner length-prefixing
+    /// unnecessary.
     #[serde(with = "hex::serde")]
     pub asset_id: Vec<u8>,
+    /// Asset quantity (number of tokens of this asset in the UTXO).
     pub quantity: u64,
 }
 
@@ -78,13 +89,18 @@ pub struct Asset {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DatumOption {
+    /// No datum on this UTXO. Tag `0x00` in the canonical encoding.
     #[default]
     None,
+    /// Reference to a 32-byte datum hash. Tag `0x01`.
     Hash {
+        /// 32-byte datum hash.
         #[serde(with = "hex::serde")]
         hash: [u8; 32],
     },
+    /// Inline datum bytes (Conway). Tag `0x02`.
     Inline {
+        /// Raw inline datum bytes.
         #[serde(with = "hex::serde")]
         data: Vec<u8>,
     },
@@ -94,9 +110,13 @@ pub enum DatumOption {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScriptLanguage {
+    /// Native multi-sig (timelock script).
     Native,
+    /// Plutus V1.
     PlutusV1,
+    /// Plutus V2 (Vasil).
     PlutusV2,
+    /// Plutus V3 (Plomin).
     PlutusV3,
 }
 
@@ -111,17 +131,25 @@ impl ScriptLanguage {
     }
 }
 
+/// A reference script attached to a UTXO (Conway-era `script_ref`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScriptRef {
+    /// Script language: native, Plutus V1, V2, or V3.
     pub language: ScriptLanguage,
+    /// Raw script bytes.
     #[serde(with = "hex::serde")]
     pub bytes: Vec<u8>,
 }
 
+/// A Cardano UTXO entry: the unspent output identified by `(tx_id,
+/// output_index)`, plus its address, value, and Conway-era extras
+/// (datum and reference script).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Utxo {
+    /// 32-byte transaction id of the producing transaction.
     #[serde(with = "hex::serde")]
     pub tx_id: [u8; 32],
+    /// Zero-based output index within the producing transaction.
     pub output_index: u32,
     /// Raw Cardano address bytes per CIP-19 (the discriminator/header
     /// byte is preserved as the first byte). Length-prefixed in the
@@ -129,16 +157,76 @@ pub struct Utxo {
     /// round-trips losslessly.
     #[serde(with = "hex::serde")]
     pub address: Vec<u8>,
+    /// ADA value of the UTXO in lovelace.
     pub value_lovelace: u64,
+    /// Native-asset bundle (sorted by `asset_id` in the canonical
+    /// encoding).
     pub assets: Vec<Asset>,
+    /// Conway datum_option: `None`, `Hash`, or `Inline`.
     #[serde(default)]
     pub datum_option: DatumOption,
+    /// Optional Conway-era reference script.
     #[serde(default)]
     pub script_ref: Option<ScriptRef>,
 }
 
 impl Utxo {
-    /// Canonical byte serialization.
+    /// Returns the canonical byte serialization of this UTXO.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::utxo_leaf::{DatumOption, Utxo};
+    /// let u = Utxo {
+    ///     tx_id: [0u8; 32],
+    ///     output_index: 0,
+    ///     address: vec![0x61u8],
+    ///     value_lovelace: 0,
+    ///     assets: vec![],
+    ///     datum_option: DatumOption::None,
+    ///     script_ref: None,
+    /// };
+    /// let bytes = u.encode()?;
+    /// assert!(!bytes.is_empty());
+    /// # Ok::<(), omega_commitment_core::utxo_leaf::LeafError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`LeafError::AddressLenOverflow`] if `address.len() > u16::MAX`.
+    /// - [`LeafError::AssetCountOverflow`] if `assets.len() > u32::MAX`.
+    /// - [`LeafError::AssetIdLenOverflow`] if any asset's `asset_id`
+    ///   is longer than `u16::MAX`.
+    /// - [`LeafError::InlineDatumLenOverflow`] if `datum_option` is
+    ///   `Inline` with `data.len() > u32::MAX`.
+    /// - [`LeafError::ScriptRefLenOverflow`] if `script_ref` is `Some`
+    ///   with `bytes.len() > u32::MAX`.
+    ///
+    /// # Soundness
+    ///
+    /// The byte layout is:
+    ///
+    /// `tx_id (32) || output_index (u32 BE) || address_len (u16 BE)
+    /// || address (variable) || value_lovelace (u64 BE) || asset_count
+    /// (u32 BE) || asset_count × (id_len (u16 BE) || asset_id || quantity
+    /// (u64 BE)) || datum_tag (u8) || datum_payload (variable) ||
+    /// script_ref_tag (u8) || script_ref_payload (variable)`.
+    ///
+    /// The asset bundle is sorted by `asset_id` lexicographically
+    /// before encoding, so two semantically-equal UTXOs with
+    /// differently-ordered asset inputs produce identical bytes. The
+    /// datum_option tag (`0x00` None, `0x01` Hash, `0x02` Inline)
+    /// disambiguates the three variants; the script_ref outer tag
+    /// (`0x00` None, `0x01` Some) followed by the inner language tag
+    /// (`0x01..=0x04`) does the same for Conway reference scripts.
+    /// The CIP-19 address discriminator byte is preserved as the
+    /// first byte of `address`, so two UTXOs that differ only in
+    /// payment-key vs script-key headers produce different leaf
+    /// hashes.
+    ///
+    /// This byte sequence is the leaf preimage and determines the
+    /// leaf hash and the per-sub-tree root; any change to widths,
+    /// ordering, endianness, or canonical sort is a wire break.
     pub fn encode(&self) -> Result<Vec<u8>, LeafError> {
         let mut out = Vec::with_capacity(128 + self.address.len());
         out.extend_from_slice(&self.tx_id);
@@ -190,7 +278,7 @@ impl Utxo {
         Ok(out)
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
+    /// Computes the legacy (untagged) leaf hash: Blake3-256 of the
     /// canonical encoding.
     ///
     /// **Deprecated for production use.** New code should call
@@ -200,13 +288,50 @@ impl Utxo {
     /// per the v1 domain-separation spec. This method is retained only
     /// for tests, CLIs, and witness paths that have not yet been
     /// migrated to the v1 builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::utxo_leaf::{DatumOption, Utxo};
+    /// let u = Utxo {
+    ///     tx_id: [0u8; 32], output_index: 0,
+    ///     address: vec![0x61u8], value_lovelace: 0,
+    ///     assets: vec![], datum_option: DatumOption::None, script_ref: None,
+    /// };
+    /// assert_eq!(u.leaf_hash()?.len(), 32);
+    /// # Ok::<(), omega_commitment_core::utxo_leaf::LeafError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Forwards every variant of [`LeafError`] from [`Self::encode`].
     pub fn leaf_hash(&self) -> Result<Hash, LeafError> {
         Ok(blake3_256(&self.encode()?))
     }
 
-    /// Return the canonical raw payload bytes that the v1 Merkle
-    /// builder consumes. The v1 builder calls `leaf_hash_v2` on this
+    /// Returns the canonical raw payload bytes that the v1 Merkle
+    /// builder consumes.
+    ///
+    /// The v1 builder calls [`crate::tree::leaf_hash_v2`] on this
     /// payload; do NOT pre-hash here.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::utxo_leaf::{DatumOption, Utxo};
+    /// let u = Utxo {
+    ///     tx_id: [0u8; 32], output_index: 0,
+    ///     address: vec![0x61u8], value_lovelace: 0,
+    ///     assets: vec![], datum_option: DatumOption::None, script_ref: None,
+    /// };
+    /// let payload = u.commit_to_subtree()?;
+    /// assert!(!payload.is_empty());
+    /// # Ok::<(), omega_commitment_core::utxo_leaf::LeafError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Forwards every variant of [`LeafError`] from [`Self::encode`].
     pub fn commit_to_subtree(&self) -> Result<Vec<u8>, LeafError> {
         self.encode()
     }

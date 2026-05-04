@@ -28,11 +28,15 @@ pub const K_STABILITY: u32 = 2160;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum StakeSnapshot {
+    /// `mark` — most recent snapshot (current epoch boundary).
     Mark,
+    /// `set` — one-epoch-old snapshot.
     Set,
+    /// `go` — two-epoch-old snapshot, used for reward calculation.
     Go,
 }
 
+/// Snapshot manifest pinning a chain point and stake distribution.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotManifest {
@@ -50,15 +54,47 @@ pub struct SnapshotManifest {
     pub stake_snapshot_select: StakeSnapshot,
 }
 
+/// Errors returned by [`SnapshotManifest::validate`].
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ManifestError {
+    /// `stability_depth` is shallower than the Cardano consensus
+    /// stability parameter `k = 2160`. Snapshots taken at less than
+    /// `k` blocks of confirmation are subject to chain reorganisation.
     #[error("stability_depth {actual} below k = {required} blocks; snapshot is not yet stable")]
-    StabilityTooShallow { actual: u32, required: u32 },
+    StabilityTooShallow {
+        /// The recorded `stability_depth`.
+        actual: u32,
+        /// The required minimum, equal to [`K_STABILITY`].
+        required: u32,
+    },
 }
 
 impl SnapshotManifest {
-    /// Reject manifests whose stability depth is below `k = 2160`.
+    /// Rejects manifests whose `stability_depth` is below
+    /// [`K_STABILITY`] (`k = 2160`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::snapshot_manifest::{
+    ///     SnapshotManifest, StakeSnapshot, K_STABILITY,
+    /// };
+    /// let m = SnapshotManifest {
+    ///     block_hash: [0u8; 32],
+    ///     slot: 0,
+    ///     epoch: 0,
+    ///     stability_depth: K_STABILITY,
+    ///     stake_snapshot_select: StakeSnapshot::Set,
+    /// };
+    /// m.validate()?;
+    /// # Ok::<(), omega_commitment_core::snapshot_manifest::ManifestError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`ManifestError::StabilityTooShallow`] when `stability_depth
+    ///   < K_STABILITY`.
     pub fn validate(&self) -> Result<(), ManifestError> {
         if self.stability_depth < K_STABILITY {
             return Err(ManifestError::StabilityTooShallow {

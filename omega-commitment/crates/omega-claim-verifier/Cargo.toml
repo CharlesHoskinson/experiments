@@ -38,3 +38,6 @@ omega-commitment-core = { path = "../omega-commitment-core" }
 [[bench]]
 name = "bench_verify_p50"
 harness = false
+
+[lints]
+workspace = true

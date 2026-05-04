@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use omega_commitment_core::{hash::blake3_256, tree::MerkleTree};
 

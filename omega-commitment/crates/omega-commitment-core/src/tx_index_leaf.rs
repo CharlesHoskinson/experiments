@@ -13,18 +13,44 @@ use crate::hash::{blake3_256, Hash};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+/// A transaction-index entry: a transaction's position within a block
+/// at a known slot.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TxIndexEntry {
+    /// 32-byte transaction id (Blake2b-256 of the tx body, on Cardano).
     #[serde(with = "hex::serde")]
     pub tx_id: [u8; 32],
+    /// Absolute slot number of the block that contains the transaction.
     pub slot: u64,
+    /// 32-byte hash of the containing block.
     #[serde(with = "hex::serde")]
     pub block_hash: [u8; 32],
+    /// Zero-based index of the transaction within the block.
     pub tx_position: u32,
 }
 
 impl TxIndexEntry {
-    /// Canonical 76-byte serialization.
+    /// Returns the canonical 76-byte serialization
+    /// `tx_id || slot_be || block_hash || tx_position_be`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::tx_index_leaf::TxIndexEntry;
+    /// let e = TxIndexEntry {
+    ///     tx_id: [0u8; 32], slot: 0,
+    ///     block_hash: [0u8; 32], tx_position: 0,
+    /// };
+    /// assert_eq!(e.encode().len(), 76);
+    /// ```
+    ///
+    /// # Soundness
+    ///
+    /// The 76-byte layout is `tx_id (32) || slot (u64 BE) || block_hash
+    /// (32) || tx_position (u32 BE)`. This byte sequence is the leaf
+    /// preimage and therefore determines the leaf hash and the
+    /// per-sub-tree root; any change to widths, ordering, or
+    /// endianness is a wire break.
     pub fn encode(&self) -> [u8; 76] {
         let mut out = [0u8; 76];
         out[0..32].copy_from_slice(&self.tx_id);
@@ -34,24 +60,56 @@ impl TxIndexEntry {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
-    /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
-    /// canonical payload that the domain-separated Merkle builder
-    /// consumes.
+    /// Computes the legacy (untagged) leaf hash: Blake3-256 of the
+    /// canonical encoding.
+    ///
+    /// See [`Self::commit_to_subtree`] for the v1 canonical payload
+    /// that the domain-separated Merkle builder consumes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::tx_index_leaf::TxIndexEntry;
+    /// let e = TxIndexEntry {
+    ///     tx_id: [0u8; 32], slot: 0,
+    ///     block_hash: [0u8; 32], tx_position: 0,
+    /// };
+    /// assert_eq!(e.leaf_hash().len(), 32);
+    /// ```
     pub fn leaf_hash(&self) -> Hash {
         blake3_256(&self.encode())
     }
 
-    /// Return the canonical raw payload bytes for the v1 Merkle
+    /// Returns the canonical raw payload bytes for the v1 Merkle
     /// builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::tx_index_leaf::TxIndexEntry;
+    /// let e = TxIndexEntry {
+    ///     tx_id: [0u8; 32], slot: 0,
+    ///     block_hash: [0u8; 32], tx_position: 0,
+    /// };
+    /// assert_eq!(e.commit_to_subtree().len(), 76);
+    /// ```
     pub fn commit_to_subtree(&self) -> Vec<u8> {
         self.encode().to_vec()
     }
 }
 
-/// Validate that no `tx_id` appears more than once across the entries.
+/// Validates that no `tx_id` appears more than once across the entries.
+///
 /// Returns the index of the second occurrence of the first duplicate
-/// found, or None if all `tx_id`s are unique.
+/// found, or `None` if all `tx_id`s are unique.
+///
+/// # Examples
+///
+/// ```
+/// use omega_commitment_core::tx_index_leaf::{validate_tx_uniqueness, TxIndexEntry};
+/// let entries: [TxIndexEntry; 0] = [];
+/// assert_eq!(validate_tx_uniqueness(&entries), None);
+/// ```
 ///
 /// Cardano transaction hashes are deterministic functions of the tx
 /// body and should be unique across the whole chain. Duplicate input

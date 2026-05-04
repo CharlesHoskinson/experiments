@@ -29,16 +29,42 @@ use std::collections::HashSet;
 /// internal Merkle hashing.
 pub type PolicyId = [u8; 28];
 
+/// A native-token policy entry: the issuance lineage of a single
+/// minting policy at the snapshot height `H`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TokenPolicy {
+    /// 28-byte Cardano policy hash (Blake3-224 of the minting script).
     #[serde(with = "hex::serde")]
     pub policy_id: PolicyId,
+    /// Slot at which the policy first issued tokens.
     pub first_issuance_slot: u64,
+    /// Total supply minted under this policy as of height `H`.
     pub total_supply_at_h: u128,
 }
 
 impl TokenPolicy {
-    /// Canonical 52-byte serialization.
+    /// Returns the canonical 52-byte serialization
+    /// `policy_id || first_issuance_slot_be || total_supply_at_h_be`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::token_policy_leaf::TokenPolicy;
+    /// let p = TokenPolicy {
+    ///     policy_id: [0u8; 28], first_issuance_slot: 0, total_supply_at_h: 0,
+    /// };
+    /// assert_eq!(p.encode().len(), 52);
+    /// ```
+    ///
+    /// # Soundness
+    ///
+    /// The 52-byte layout is `policy_id (28) || first_issuance_slot
+    /// (u64 BE) || total_supply_at_h (u128 BE)`. This byte sequence is
+    /// the leaf preimage and therefore determines the leaf hash and
+    /// the per-sub-tree root; any change to widths, ordering, or
+    /// endianness is a wire break. Note that `policy_id` is 28 bytes
+    /// (Cardano canonical width) while the leaf hash is 32 bytes —
+    /// the asymmetry is intentional and matches on-chain identifiers.
     pub fn encode(&self) -> [u8; 52] {
         let mut out = [0u8; 52];
         out[0..28].copy_from_slice(&self.policy_id);
@@ -47,24 +73,54 @@ impl TokenPolicy {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
-    /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
-    /// canonical payload that the domain-separated Merkle builder
-    /// consumes.
+    /// Computes the legacy (untagged) leaf hash: Blake3-256 of the
+    /// canonical encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::token_policy_leaf::TokenPolicy;
+    /// let p = TokenPolicy {
+    ///     policy_id: [0u8; 28], first_issuance_slot: 0, total_supply_at_h: 0,
+    /// };
+    /// assert_eq!(p.leaf_hash().len(), 32);
+    /// ```
     pub fn leaf_hash(&self) -> Hash {
         blake3_256(&self.encode())
     }
 
-    /// Return the canonical raw payload bytes for the v1 Merkle
+    /// Returns the canonical raw payload bytes for the v1 Merkle
     /// builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::token_policy_leaf::TokenPolicy;
+    /// let p = TokenPolicy {
+    ///     policy_id: [0u8; 28], first_issuance_slot: 0, total_supply_at_h: 0,
+    /// };
+    /// assert_eq!(p.commit_to_subtree().len(), 52);
+    /// ```
     pub fn commit_to_subtree(&self) -> Vec<u8> {
         self.encode().to_vec()
     }
 }
 
-/// Validate that no `policy_id` appears more than once across the
-/// entries. Returns the index of the second occurrence of the first
-/// duplicate found, or None if all `policy_id`s are unique.
+/// Validates that no `policy_id` appears more than once across the
+/// entries.
+///
+/// Returns the index of the second occurrence of the first duplicate
+/// found, or `None` if all `policy_id`s are unique.
+///
+/// # Examples
+///
+/// ```
+/// use omega_commitment_core::token_policy_leaf::{
+///     validate_policy_id_uniqueness, TokenPolicy,
+/// };
+/// let entries: [TokenPolicy; 0] = [];
+/// assert_eq!(validate_policy_id_uniqueness(&entries), None);
+/// ```
 ///
 /// Cardano policy hashes are deterministic functions of the minting
 /// script and should be unique. Duplicate input is a data error

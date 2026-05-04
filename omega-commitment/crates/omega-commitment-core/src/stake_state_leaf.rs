@@ -46,17 +46,27 @@ pub type CredentialHash = [u8; 28];
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DrepDelegation {
+    /// Tag `0x00`. No DRep delegation; no payload follows in the
+    /// canonical encoding.
     #[default]
     None,
+    /// Tag `0x01`. DRep is a 28-byte key hash.
     KeyHash {
+        /// 28-byte DRep key hash.
         #[serde(with = "hex::serde")]
         hash: CredentialHash,
     },
+    /// Tag `0x02`. DRep is a 28-byte script hash.
     ScriptHash {
+        /// 28-byte DRep script hash.
         #[serde(with = "hex::serde")]
         hash: CredentialHash,
     },
+    /// Tag `0x03`. CIP-1694 predefined "always abstain" DRep; no
+    /// payload follows.
     AlwaysAbstain,
+    /// Tag `0x04`. CIP-1694 predefined "always no-confidence" DRep;
+    /// no payload follows.
     AlwaysNoConfidence,
 }
 
@@ -72,20 +82,59 @@ impl DrepDelegation {
     }
 }
 
+/// A stake-state entry: one Conway-era stake credential's delegation
+/// and reward state.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct StakeEntry {
+    /// 28-byte stake credential hash (Blake3-224 of a stake key or
+    /// stake script).
     #[serde(with = "hex::serde")]
     pub stake_credential_hash: CredentialHash,
+    /// 28-byte stake-pool credential hash. The all-zeros value
+    /// (`[0u8; 28]`) means "not delegated to any pool".
     #[serde(with = "hex::serde")]
     pub delegated_pool: CredentialHash,
+    /// CIP-1694 DRep delegation target.
     #[serde(default)]
     pub delegated_drep: DrepDelegation,
+    /// Withdrawable rewards balance in lovelace.
     pub rewards_lovelace: u64,
+    /// Pool-operator flag (`0` = not an operator, `1` = operator).
     pub is_pool_operator: u8,
 }
 
 impl StakeEntry {
-    /// Canonical serialization (66 or 94 bytes depending on DRep variant).
+    /// Returns the canonical serialization (66 bytes for the no-payload
+    /// DRep variants `None`, `AlwaysAbstain`, `AlwaysNoConfidence`; 94
+    /// bytes when DRep is `KeyHash` or `ScriptHash`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::stake_state_leaf::{DrepDelegation, StakeEntry};
+    /// let s = StakeEntry {
+    ///     stake_credential_hash: [0u8; 28],
+    ///     delegated_pool: [0u8; 28],
+    ///     delegated_drep: DrepDelegation::None,
+    ///     rewards_lovelace: 0,
+    ///     is_pool_operator: 0,
+    /// };
+    /// assert_eq!(s.encode().len(), 66);
+    /// ```
+    ///
+    /// # Soundness
+    ///
+    /// The canonical layout is `stake_credential_hash (28) ||
+    /// delegated_pool (28) || drep_tag (u8) || drep_payload (0 or 28
+    /// bytes) || rewards_lovelace (u64 BE) || is_pool_operator (u8)`.
+    /// The `drep_payload` follows only when `drep_tag` is `0x01`
+    /// (KeyHash) or `0x02` (ScriptHash); for the other three tags
+    /// (`0x00` None, `0x03` AlwaysAbstain, `0x04` AlwaysNoConfidence)
+    /// no payload bytes follow. The DRep tag therefore disambiguates
+    /// `KeyHash`-with-payload from `ScriptHash`-with-payload even when
+    /// the 28-byte payloads are equal — the tag byte itself is bound
+    /// into the leaf preimage. Any change to widths, ordering, or
+    /// endianness is a wire break.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(94);
         out.extend_from_slice(&self.stake_credential_hash);
@@ -104,24 +153,62 @@ impl StakeEntry {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
-    /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
-    /// canonical payload that the domain-separated Merkle builder
-    /// consumes.
+    /// Computes the legacy (untagged) leaf hash: Blake3-256 of the
+    /// canonical encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::stake_state_leaf::{DrepDelegation, StakeEntry};
+    /// let s = StakeEntry {
+    ///     stake_credential_hash: [0u8; 28],
+    ///     delegated_pool: [0u8; 28],
+    ///     delegated_drep: DrepDelegation::None,
+    ///     rewards_lovelace: 0,
+    ///     is_pool_operator: 0,
+    /// };
+    /// assert_eq!(s.leaf_hash().len(), 32);
+    /// ```
     pub fn leaf_hash(&self) -> Hash {
         blake3_256(&self.encode())
     }
 
-    /// Return the canonical raw payload bytes for the v1 Merkle
+    /// Returns the canonical raw payload bytes for the v1 Merkle
     /// builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::stake_state_leaf::{DrepDelegation, StakeEntry};
+    /// let s = StakeEntry {
+    ///     stake_credential_hash: [0u8; 28],
+    ///     delegated_pool: [0u8; 28],
+    ///     delegated_drep: DrepDelegation::None,
+    ///     rewards_lovelace: 0,
+    ///     is_pool_operator: 0,
+    /// };
+    /// assert_eq!(s.commit_to_subtree().len(), 66);
+    /// ```
     pub fn commit_to_subtree(&self) -> Vec<u8> {
         self.encode()
     }
 }
 
-/// Validate that no `stake_credential_hash` appears more than once
-/// across the entries. Returns the index of the second occurrence
-/// of the first duplicate, or None if all are unique.
+/// Validates that no `stake_credential_hash` appears more than once
+/// across the entries.
+///
+/// Returns the index of the second occurrence of the first duplicate,
+/// or `None` if all are unique.
+///
+/// # Examples
+///
+/// ```
+/// use omega_commitment_core::stake_state_leaf::{
+///     validate_stake_credential_uniqueness, StakeEntry,
+/// };
+/// let entries: [StakeEntry; 0] = [];
+/// assert_eq!(validate_stake_credential_uniqueness(&entries), None);
+/// ```
 ///
 /// Cardano stake credentials are deterministic; duplicates indicate
 /// a data error. Optional sanity helper; commitment generation does

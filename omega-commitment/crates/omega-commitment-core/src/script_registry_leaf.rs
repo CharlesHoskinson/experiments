@@ -37,17 +37,45 @@ use std::collections::HashSet;
 /// Merkle hashing.
 pub type ScriptHash = [u8; 28];
 
+/// A script-registry entry: identity and provenance for a single
+/// on-chain script (native multi-sig or any Plutus version).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ScriptEntry {
+    /// 28-byte Cardano script hash.
     #[serde(with = "hex::serde")]
     pub script_hash: ScriptHash,
+    /// Slot at which the script first appeared on chain.
     pub deployment_slot: u64,
+    /// Size of the canonical script bytes in bytes.
     pub script_size_bytes: u32,
+    /// Language tag: `0` native, `1` Plutus V1, `2` Plutus V2, `3`
+    /// Plutus V3. Future variants reserved.
     pub language: u8,
 }
 
 impl ScriptEntry {
-    /// Canonical 41-byte serialization.
+    /// Returns the canonical 41-byte serialization
+    /// `script_hash || deployment_slot_be || script_size_bytes_be ||
+    /// language`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::script_registry_leaf::ScriptEntry;
+    /// let s = ScriptEntry {
+    ///     script_hash: [0u8; 28], deployment_slot: 0,
+    ///     script_size_bytes: 0, language: 0,
+    /// };
+    /// assert_eq!(s.encode().len(), 41);
+    /// ```
+    ///
+    /// # Soundness
+    ///
+    /// The 41-byte layout is `script_hash (28) || deployment_slot
+    /// (u64 BE) || script_size_bytes (u32 BE) || language (u8)`. This
+    /// byte sequence is the leaf preimage and determines the leaf
+    /// hash and the per-sub-tree root; any change to widths, ordering,
+    /// or endianness is a wire break.
     pub fn encode(&self) -> [u8; 41] {
         let mut out = [0u8; 41];
         out[0..28].copy_from_slice(&self.script_hash);
@@ -57,24 +85,56 @@ impl ScriptEntry {
         out
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
-    /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
-    /// canonical payload that the domain-separated Merkle builder
-    /// consumes.
+    /// Computes the legacy (untagged) leaf hash: Blake3-256 of the
+    /// canonical encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::script_registry_leaf::ScriptEntry;
+    /// let s = ScriptEntry {
+    ///     script_hash: [0u8; 28], deployment_slot: 0,
+    ///     script_size_bytes: 0, language: 0,
+    /// };
+    /// assert_eq!(s.leaf_hash().len(), 32);
+    /// ```
     pub fn leaf_hash(&self) -> Hash {
         blake3_256(&self.encode())
     }
 
-    /// Return the canonical raw payload bytes for the v1 Merkle
+    /// Returns the canonical raw payload bytes for the v1 Merkle
     /// builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::script_registry_leaf::ScriptEntry;
+    /// let s = ScriptEntry {
+    ///     script_hash: [0u8; 28], deployment_slot: 0,
+    ///     script_size_bytes: 0, language: 0,
+    /// };
+    /// assert_eq!(s.commit_to_subtree().len(), 41);
+    /// ```
     pub fn commit_to_subtree(&self) -> Vec<u8> {
         self.encode().to_vec()
     }
 }
 
-/// Validate that no `script_hash` appears more than once across the
-/// entries. Returns the index of the second occurrence of the first
-/// duplicate, or None if all `script_hash`es are unique.
+/// Validates that no `script_hash` appears more than once across the
+/// entries.
+///
+/// Returns the index of the second occurrence of the first duplicate,
+/// or `None` if all `script_hash`es are unique.
+///
+/// # Examples
+///
+/// ```
+/// use omega_commitment_core::script_registry_leaf::{
+///     validate_script_hash_uniqueness, ScriptEntry,
+/// };
+/// let entries: [ScriptEntry; 0] = [];
+/// assert_eq!(validate_script_hash_uniqueness(&entries), None);
+/// ```
 ///
 /// Cardano script hashes are deterministic Blake3-224 of the
 /// canonical script bytes; duplicates indicate a data error

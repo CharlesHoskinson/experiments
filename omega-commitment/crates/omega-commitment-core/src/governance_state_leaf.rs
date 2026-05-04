@@ -45,10 +45,15 @@ use std::collections::HashSet;
 
 /// Kind tags used in the canonical encoding's leading byte.
 pub mod kind {
+    /// Treasury balance fact.
     pub const TREASURY: u8 = 0x00;
+    /// Constitutional Committee seat fact.
     pub const CC_SEAT: u8 = 0x01;
+    /// Ratified governance-action fact.
     pub const RATIFIED_ACTION: u8 = 0x02;
+    /// In-flight governance-action fact.
     pub const IN_FLIGHT_ACTION: u8 = 0x03;
+    /// Conway-era AccountState pots fact (singleton per snapshot).
     pub const ACCOUNT_STATE: u8 = 0x04;
 }
 
@@ -60,49 +65,70 @@ pub mod kind {
 pub enum GovernanceFact {
     /// `kind == 0x00`. Treasury balance snapshot.
     Treasury {
+        /// Identity key. Convention: `[0u8; 32]` for the singleton
+        /// treasury balance, since the treasury has no per-account
+        /// key.
         #[serde(with = "hex::serde")]
         key: [u8; 32],
+        /// Treasury balance in lovelace, as a `u128`.
         #[serde(with = "crate::serde_helpers::u128_dec")]
         value: u128,
+        /// Slot of the snapshot.
         slot: u64,
     },
     /// `kind == 0x01`. CC seat record.
     CcSeat {
+        /// CC member's credential hash, padded from 28 to 32 bytes
+        /// with trailing zeros.
         #[serde(with = "hex::serde")]
         key: [u8; 32],
+        /// Expiration epoch as a `u128`.
         #[serde(with = "crate::serde_helpers::u128_dec")]
         value: u128,
+        /// Slot of the snapshot.
         slot: u64,
     },
     /// `kind == 0x02`. Ratified governance action.
     RatifiedAction {
+        /// Action's tx_id (32-byte transaction hash).
         #[serde(with = "hex::serde")]
         key: [u8; 32],
+        /// Packed `(action_type:u16 << 0) | (slot_ratified:u64 << 16)`,
+        /// top 48 bits reserved.
         #[serde(with = "crate::serde_helpers::u128_dec")]
         value: u128,
+        /// Slot of the snapshot.
         slot: u64,
     },
     /// `kind == 0x03`. In-flight governance action.
     InFlightAction {
+        /// Action's tx_id (32-byte transaction hash).
         #[serde(with = "hex::serde")]
         key: [u8; 32],
+        /// Packed `(action_type:u16 << 0) | (slot_submitted:u64 << 16)`,
+        /// top 48 bits reserved.
         #[serde(with = "crate::serde_helpers::u128_dec")]
         value: u128,
+        /// Slot of the snapshot.
         slot: u64,
     },
-    /// `kind == 0x04`. Conway-era ledger AccountState pots.
-    /// All four pots are required; the ingest layer fails closed if
-    /// any one is missing from the input snapshot.
+    /// `kind == 0x04`. Conway-era ledger AccountState pots. All four
+    /// pots are required; the ingest layer fails closed if any one
+    /// is missing from the input snapshot.
     AccountState {
+        /// Reserves pot in lovelace.
         reserves: u64,
+        /// Treasury pot in lovelace.
         treasury: u64,
+        /// Deposits pot in lovelace.
         deposits: u64,
+        /// Per-block fee pot in lovelace.
         fee_pot: u64,
     },
 }
 
 impl GovernanceFact {
-    /// One-byte canonical kind discriminant.
+    /// Returns the one-byte canonical kind discriminant.
     pub fn kind(&self) -> u8 {
         match self {
             GovernanceFact::Treasury { .. } => kind::TREASURY,
@@ -113,8 +139,41 @@ impl GovernanceFact {
         }
     }
 
-    /// Canonical byte serialization. Width depends on variant:
-    /// 57 bytes for the legacy 4 variants, 33 bytes for AccountState.
+    /// Returns the canonical byte serialization.
+    ///
+    /// Width depends on variant: 57 bytes for the four `(key, value,
+    /// slot)` variants (Treasury, CcSeat, RatifiedAction,
+    /// InFlightAction), 33 bytes for AccountState.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::governance_state_leaf::GovernanceFact;
+    /// let f = GovernanceFact::AccountState {
+    ///     reserves: 1, treasury: 2, deposits: 3, fee_pot: 4,
+    /// };
+    /// assert_eq!(f.encode().len(), 33);
+    /// ```
+    ///
+    /// # Soundness
+    ///
+    /// The byte layout is:
+    ///
+    /// - For `Treasury`, `CcSeat`, `RatifiedAction`, `InFlightAction`:
+    ///   `kind (u8) || key (32) || value (u128 BE) || slot (u64 BE)`.
+    ///   Total 57 bytes. The leading kind byte distinguishes the four
+    ///   variants even when `(key, value, slot)` happen to coincide.
+    /// - For `AccountState`: `kind (u8) || reserves (u64 BE) ||
+    ///   treasury (u64 BE) || deposits (u64 BE) || fee_pot (u64 BE)`.
+    ///   Total 33 bytes.
+    ///
+    /// This byte sequence is the leaf preimage and determines the
+    /// leaf hash and the per-sub-tree root; any change to widths,
+    /// ordering, or endianness is a wire break. The variable width
+    /// across variants is intentional — AccountState's payload has
+    /// no `key` or `slot`, so the 24 bytes that would otherwise hold
+    /// them are simply absent rather than zero-padded, keeping the
+    /// preimage minimal and unambiguous.
     pub fn encode(&self) -> Vec<u8> {
         match self {
             GovernanceFact::Treasury { key, value, slot }
@@ -145,16 +204,34 @@ impl GovernanceFact {
         }
     }
 
-    /// Compute the legacy (untagged) leaf hash: Blake3-256 of the
-    /// canonical encoding. See [`Self::commit_to_subtree`] for the v1
-    /// canonical payload that the domain-separated Merkle builder
-    /// consumes.
+    /// Computes the legacy (untagged) leaf hash: Blake3-256 of the
+    /// canonical encoding.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::governance_state_leaf::GovernanceFact;
+    /// let f = GovernanceFact::AccountState {
+    ///     reserves: 1, treasury: 2, deposits: 3, fee_pot: 4,
+    /// };
+    /// assert_eq!(f.leaf_hash().len(), 32);
+    /// ```
     pub fn leaf_hash(&self) -> Hash {
         blake3_256(&self.encode())
     }
 
-    /// Return the canonical raw payload bytes for the v1 Merkle
+    /// Returns the canonical raw payload bytes for the v1 Merkle
     /// builder.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::governance_state_leaf::GovernanceFact;
+    /// let f = GovernanceFact::AccountState {
+    ///     reserves: 1, treasury: 2, deposits: 3, fee_pot: 4,
+    /// };
+    /// assert_eq!(f.commit_to_subtree().len(), 33);
+    /// ```
     pub fn commit_to_subtree(&self) -> Vec<u8> {
         self.encode()
     }
@@ -174,9 +251,21 @@ fn fact_identity(f: &GovernanceFact) -> (u8, [u8; 32]) {
     }
 }
 
-/// Validate that no `(kind, key)` pair appears more than once across
-/// the entries. Returns the index of the second occurrence of the
-/// first duplicate, or None if all `(kind, key)` pairs are unique.
+/// Validates that no `(kind, key)` pair appears more than once across
+/// the entries.
+///
+/// Returns the index of the second occurrence of the first duplicate,
+/// or `None` if all `(kind, key)` pairs are unique.
+///
+/// # Examples
+///
+/// ```
+/// use omega_commitment_core::governance_state_leaf::{
+///     validate_governance_keys_unique_per_kind, GovernanceFact,
+/// };
+/// let entries: [GovernanceFact; 0] = [];
+/// assert_eq!(validate_governance_keys_unique_per_kind(&entries), None);
+/// ```
 ///
 /// The same `key` is allowed across different `kind`s (e.g., a
 /// gov-action tx_id could appear as both ratified and in-flight in

@@ -17,6 +17,10 @@
 name = "plonky3-friendly-rust"
 src  = "local/plonky3-friendly-rust"
 
+[[skill.local]]
+name = "omega-rustdoc-style"
+src  = "local/omega-rustdoc-style"
+
 # ---------------------------------------------------------------------------
 # Single-file SKILL.md skills (clone repo, copy SKILL.md from root)
 # ---------------------------------------------------------------------------

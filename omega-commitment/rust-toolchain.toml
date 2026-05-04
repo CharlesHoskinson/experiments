@@ -1,4 +1,10 @@
 [toolchain]
-channel = "stable"
+# Pinned to match the version `.github/workflows/ci.yml` resolves via
+# `dtolnay/rust-toolchain@stable`. CI tracks latest stable; we pin a
+# concrete version here so local `cargo {fmt, clippy, test}` gates
+# match what CI enforces. Without this pin, lints introduced in newer
+# stable releases (e.g. `result_large_err` from 1.95) slip past local
+# verification and surface only on PR. Bump in lockstep with CI.
+channel = "1.95.0"
 components = ["clippy", "rustfmt"]
 profile = "minimal"

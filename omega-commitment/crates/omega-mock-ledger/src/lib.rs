@@ -1,4 +1,10 @@
 #![forbid(unsafe_code)]
+// `openraft::StorageError<u64>` is 224 bytes; the `result_large_err` lint
+// (Rust 1.95+) flags every `Result<_, openraft::StorageError<_>>` site.
+// The error size is fixed by openraft's API; boxing it would change the
+// trait-impl shape openraft expects. Allow the lint crate-locally until
+// openraft 0.10+ ships a boxed-error variant.
+#![allow(clippy::result_large_err)]
 
 //! SQLite-backed mock ledger for the proof experiment harness.
 //!
