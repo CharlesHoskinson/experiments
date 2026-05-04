@@ -1,27 +1,53 @@
-//! Inclusion witness for a UTXO leaf in the Merkle tree.
+//! Inclusion witness against the legacy [`MerkleTree::build`] root.
+//!
+//! [`InclusionWitness`] proves that a leaf hash sits at a specific
+//! sorted index under a published Merkle root. The verifier replays
+//! the path with raw Blake3 of `left || right` concatenations, which
+//! matches the legacy [`MerkleTree::build`] construction. The v1
+//! domain-separated `build_v1` path uses [`crate::tree::node_hash_v2`]
+//! and is consumed by the STARK verifier in `omega-claim-verifier`,
+//! not by this witness type.
 
 use crate::hash::{blake3_256, Hash};
 use crate::tree::MerkleTree;
 use serde::{Deserialize, Serialize};
 
+/// A Merkle inclusion witness: a leaf hash, its sorted index, and the
+/// sibling hashes along the path from leaf to root.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InclusionWitness {
     /// The leaf hash being proven.
     #[serde(with = "hex::serde")]
     pub leaf: Hash,
-    /// Position of the leaf in the sorted-padded leaves array.
+    /// Position of the leaf in the sorted, padded leaves array.
     pub leaf_index: u32,
-    /// Sibling hashes from leaf-level up to (but not including) the root.
-    /// `siblings[i]` is the sibling of the node at layer i on the path
-    /// from leaf to root.
+    /// Sibling hashes from leaf-level up to (but not including) the
+    /// root. `siblings[i]` is the sibling of the node at layer `i` on
+    /// the path from leaf to root.
     #[serde(with = "crate::serde_helpers::hex_vec_hash")]
     pub siblings: Vec<Hash>,
 }
 
 impl InclusionWitness {
-    /// Build a witness for the leaf at a known index in the (sorted, padded)
-    /// leaves array. Faster than `build` when you already know the index —
+    /// Builds a witness for the leaf at a known index in the sorted,
+    /// padded leaves array.
+    ///
+    /// Faster than [`Self::build`] when the index is already known;
     /// avoids the O(n) `position` scan.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::hash::blake3_256;
+    /// use omega_commitment_core::tree::MerkleTree;
+    /// use omega_commitment_core::witness::InclusionWitness;
+    /// let leaves = vec![blake3_256(b"a"), blake3_256(b"b")];
+    /// let tree = MerkleTree::build(leaves);
+    /// let w = InclusionWitness::build_at_index(&tree, 0).expect("index in range");
+    /// assert!(w.verify(tree.root()));
+    /// ```
+    ///
+    /// Returns `None` if `leaf_index` is out of range.
     pub fn build_at_index(tree: &MerkleTree, leaf_index: u32) -> Option<Self> {
         let leaves = tree.leaves();
         let leaf = *leaves.get(leaf_index as usize)?;
@@ -40,8 +66,22 @@ impl InclusionWitness {
         })
     }
 
-    /// Build a witness for the given leaf hash. Returns None if the leaf
-    /// isn't in the tree.
+    /// Builds a witness for the given leaf hash.
+    ///
+    /// Scans the sorted leaves array for `leaf` and constructs the
+    /// path. Returns `None` if `leaf` is not present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::hash::blake3_256;
+    /// use omega_commitment_core::tree::MerkleTree;
+    /// use omega_commitment_core::witness::InclusionWitness;
+    /// let a = blake3_256(b"a");
+    /// let tree = MerkleTree::build(vec![a]);
+    /// let w = InclusionWitness::build(&tree, a).expect("leaf present");
+    /// assert!(w.verify(tree.root()));
+    /// ```
     pub fn build(tree: &MerkleTree, leaf: Hash) -> Option<Self> {
         let leaves = tree.leaves();
         let leaf_index = leaves.iter().position(|h| h == &leaf)? as u32;
@@ -60,7 +100,67 @@ impl InclusionWitness {
         })
     }
 
-    /// Verify this witness against a claimed root.
+    /// Verifies this witness against a claimed root.
+    ///
+    /// Replays the path with raw Blake3 of `left || right`
+    /// concatenations (legacy [`MerkleTree::build`] node construction),
+    /// orienting each step by the parity of the index at that layer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::hash::blake3_256;
+    /// use omega_commitment_core::tree::MerkleTree;
+    /// use omega_commitment_core::witness::InclusionWitness;
+    /// let a = blake3_256(b"a");
+    /// let tree = MerkleTree::build(vec![a]);
+    /// let w = InclusionWitness::build(&tree, a).expect("leaf present");
+    /// assert!(w.verify(tree.root()));
+    /// assert!(!w.verify([0u8; 32]));
+    /// ```
+    ///
+    /// # Soundness
+    ///
+    /// `verify(root)` returns `true` iff the witness's `leaf` sits at
+    /// `leaf_index` in a tree whose layer-by-layer parent computation
+    /// `parent = blake3(if idx_bit == 0 { current || sibling } else
+    /// { sibling || current })` reaches `root` after `siblings.len()`
+    /// steps.
+    ///
+    /// The malformed-witness checks reject:
+    ///
+    /// - depths `>= 32` (exceeds `u32` index space and would overflow
+    ///   the `1 << depth` bound),
+    /// - `leaf_index` outside `[0, 2^depth)` (impossible position for
+    ///   a tree of that depth).
+    ///
+    /// These reject witnesses an honest builder would never produce
+    /// and close the malformed-witness DoS class.
+    ///
+    /// **The verifier does NOT check that `leaf` is a domain-separated
+    /// v1 leaf hash.** This witness type is paired with the legacy
+    /// [`MerkleTree::build`] construction, which uses raw Blake3 of
+    /// `left || right` concatenations and pads with [`ZERO_HASH`]. It
+    /// inherits that path's lack of [`DOMAIN_LEAF`] /
+    /// [`DOMAIN_NODE`] separation: an adversary who can produce a
+    /// 64-byte preimage colliding with an internal node would be
+    /// accepted. New code that requires the v1 second-preimage-swap
+    /// closure must use [`MerkleTree::build_v1`] together with the
+    /// STARK verifier in `omega-claim-verifier`, which constrains
+    /// [`crate::tree::leaf_hash_v2`] and [`crate::tree::node_hash_v2`]
+    /// inside the AIR.
+    ///
+    /// # Limitations
+    ///
+    /// Bound to the legacy [`MerkleTree::build`] hash construction.
+    /// Migration to a v1 witness verifier is tracked under v1.0 work
+    /// (track T6).
+    ///
+    /// [`DOMAIN_LEAF`]: crate::tree::DOMAIN_LEAF
+    /// [`DOMAIN_NODE`]: crate::tree::DOMAIN_NODE
+    /// [`ZERO_HASH`]: crate::tree::ZERO_HASH
+    /// [`MerkleTree::build`]: crate::tree::MerkleTree::build
+    /// [`MerkleTree::build_v1`]: crate::tree::MerkleTree::build_v1
     pub fn verify(&self, root: Hash) -> bool {
         let depth = self.siblings.len();
         // Reject witnesses with absurd depth or out-of-range index.

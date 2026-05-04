@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::sync::OnceLock;
 
 use omega_claim_prover::{

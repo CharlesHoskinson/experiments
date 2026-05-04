@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use omega_claim_prover::{prove_collection, MembershipWitness, OmegaCommitment, ProverConfig};
 use omega_claim_tx::{ClaimPublicInputs, ProofBytes};

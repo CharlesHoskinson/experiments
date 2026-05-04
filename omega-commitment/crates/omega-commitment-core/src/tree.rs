@@ -26,41 +26,109 @@
 use crate::hash::{blake3_256, Hash};
 use thiserror::Error;
 
-/// Domain tag bound into every v1 leaf preimage.
+/// Domain tag (`b"omega:v2:leaf"`) bound into every v1 leaf preimage.
+///
+/// # Soundness
+///
+/// Distinct from [`DOMAIN_NODE`] so that no leaf preimage collides with
+/// any internal-node preimage. Closes the second-preimage swap class
+/// of attack: an adversary who concatenates two child hashes as a
+/// 64-byte "leaf payload" cannot reproduce an existing internal-node
+/// hash because the domain tags differ at byte zero of the preimage.
 pub const DOMAIN_LEAF: &[u8] = b"omega:v2:leaf";
-/// Domain tag bound into every v1 internal-node preimage.
+
+/// Domain tag (`b"omega:v2:node"`) bound into every v1 internal-node
+/// preimage.
+///
+/// # Soundness
+///
+/// Distinct from [`DOMAIN_LEAF`]; see that constant's `# Soundness`
+/// block for the second-preimage-swap framing.
 pub const DOMAIN_NODE: &[u8] = b"omega:v2:node";
 
-/// Sentinel index used when synthesising a domain-separated empty leaf
-/// for power-of-two padding. A verifier MUST reject any inclusion proof
-/// whose `canonical_index` equals this value — the index is reserved
-/// for padding and cannot be a real membership target.
+/// Reserved `canonical_index` value (`u64::MAX`) used by
+/// [`MerkleTree::build_v1`] when synthesising the domain-separated
+/// empty leaves that pad the tree to the next power of two.
+///
+/// # Soundness
+///
+/// A verifier reading the published `item_count` MUST reject any
+/// inclusion proof whose `canonical_index >= item_count`, and in
+/// particular any proof whose `canonical_index == EMPTY_INDEX_SENTINEL`.
+/// The sentinel is reserved for padding and is never a legitimate
+/// membership target. This closes the padding-leaf forgery attack: an
+/// adversary who points a witness at a padding slot cannot have it
+/// accepted as a real leaf because the verifier rejects the index
+/// before checking the path.
 pub const EMPTY_INDEX_SENTINEL: u64 = u64::MAX;
 
-/// Legacy zero-hash padding leaf retained for the deprecated
-/// `MerkleTree::build` path. New code must use `build_v1` which pads
-/// with the domain-separated empty-leaf hash.
+/// Legacy raw-zero hash used as padding by the deprecated
+/// [`MerkleTree::build`] path.
+///
+/// # Soundness
+///
+/// `ZERO_HASH` is NOT domain-separated and an adversary can trivially
+/// forge `ZERO_HASH` as the "hash" of an unknown preimage by definition
+/// (it is the all-zeros byte string). Production paths that need
+/// padding-leaf-forgery resistance MUST use [`MerkleTree::build_v1`],
+/// which pads with [`leaf_hash_v2(_, EMPTY_INDEX_SENTINEL, &[])`][leaf_hash_v2]
+/// instead.
 pub const ZERO_HASH: Hash = [0u8; 32];
 
-/// Errors returned by the v1 builder.
+/// Errors returned by [`MerkleTree::build_v1`].
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BuildError {
-    /// Two distinct leaves shared the same payload bytes after canonical
-    /// sorting. The canonical key for each sub-tree must be unique.
+    /// Two distinct leaves shared the same payload bytes after sorting.
+    /// In every sub-tree the unsorted semantic key (txid+output_index,
+    /// slot+block_hash, policy_id, etc.) is bound into the payload, so
+    /// byte-identical payloads always indicate ingest-side data
+    /// corruption.
     #[error("duplicate leaf payload in sub-tree {sub_tree_id} at sorted index {index}")]
-    DuplicateLeafPayload { sub_tree_id: u8, index: usize },
+    DuplicateLeafPayload {
+        /// Sub-tree identifier the builder was invoked with.
+        sub_tree_id: u8,
+        /// Sorted index of the second occurrence of the duplicated
+        /// payload.
+        index: usize,
+    },
 }
 
-/// Domain-separated leaf hash.
+/// Computes a v1 domain-separated leaf hash.
 ///
-/// `H(DOMAIN_LEAF || sub_tree_id || canonical_index_be || payload_len_be
-///    || payload)` using Blake3-256.
+/// The preimage is
+/// `DOMAIN_LEAF || sub_tree_id || canonical_index_be || payload_len_be
+/// || payload`, hashed with [`blake3_256`]. The domain tag closes the
+/// classic Merkle second-preimage swap; the `(sub_tree_id,
+/// canonical_index)` pair is bound into the preimage so a verifier
+/// reading a published `item_count` can reject any inclusion proof
+/// whose `canonical_index >= item_count`.
 ///
-/// Binding the `(sub_tree_id, canonical_index)` pair into the preimage
-/// closes the audit findings A1/F001 (leaves did not bind sub_tree_id
-/// or canonical leaf_index) and A1/F002 (leaf and internal-node hashes
-/// shared an untagged domain).
+/// # Examples
+///
+/// ```
+/// use omega_commitment_core::tree::leaf_hash_v2;
+/// let h = leaf_hash_v2(1, 0, b"alice");
+/// assert_eq!(h.len(), 32);
+/// ```
+///
+/// # Soundness
+///
+/// Output is collision-resistant against any adversary bounded by
+/// Blake3's security level (128 bits). Two distinct
+/// `(sub_tree_id, canonical_index, payload)` triples produce different
+/// hashes; a triple cannot collide with [`node_hash_v2`]'s output
+/// because the domain tags differ. Binding the `(sub_tree_id,
+/// canonical_index)` pair closes the audit findings A1/F001 (leaves
+/// did not bind `sub_tree_id` or canonical `leaf_index`) and A1/F002
+/// (leaf and internal-node hashes shared an untagged domain).
+///
+/// # Limitations
+///
+/// `payload` MUST be ≤ 64 bytes for the v0.1 verifier circuit (one
+/// Blake3 compression block). Longer payloads compute correctly but
+/// cannot be proven in the v0.1 `OmegaMembershipAir`; v0.2's
+/// `LeafPreimageAir` lifts the bound.
 pub fn leaf_hash_v2(sub_tree_id: u8, canonical_index: u64, payload: &[u8]) -> Hash {
     let mut buf = Vec::with_capacity(DOMAIN_LEAF.len() + 1 + 8 + 8 + payload.len());
     buf.extend_from_slice(DOMAIN_LEAF);
@@ -71,9 +139,33 @@ pub fn leaf_hash_v2(sub_tree_id: u8, canonical_index: u64, payload: &[u8]) -> Ha
     blake3_256(&buf)
 }
 
-/// Domain-separated internal-node hash.
+/// Computes a v1 domain-separated internal-node hash.
 ///
-/// `H(DOMAIN_NODE || left || right)` using Blake3-256.
+/// The preimage is `DOMAIN_NODE || left || right`, hashed with
+/// [`blake3_256`].
+///
+/// # Examples
+///
+/// ```
+/// use omega_commitment_core::tree::node_hash_v2;
+/// let left = [0x11u8; 32];
+/// let right = [0x22u8; 32];
+/// let h = node_hash_v2(&left, &right);
+/// assert_eq!(h.len(), 32);
+/// ```
+///
+/// # Soundness
+///
+/// Output is collision-resistant against any adversary bounded by
+/// Blake3's security level (128 bits). The `DOMAIN_NODE` tag prevents
+/// any internal-node preimage from colliding with a leaf preimage: an
+/// adversary who supplies a 64-byte concatenation `left || right` as
+/// a leaf payload cannot reproduce the matching internal-node hash
+/// because the leaf preimage carries [`DOMAIN_LEAF`] while the node
+/// preimage carries [`DOMAIN_NODE`]. The `(left, right)` pair is
+/// position-sensitive: swapping the two siblings produces a different
+/// hash, which is what the witness verifier exploits to enforce path
+/// orientation.
 pub fn node_hash_v2(left: &Hash, right: &Hash) -> Hash {
     let mut buf = Vec::with_capacity(DOMAIN_NODE.len() + 64);
     buf.extend_from_slice(DOMAIN_NODE);
@@ -82,6 +174,14 @@ pub fn node_hash_v2(left: &Hash, right: &Hash) -> Hash {
     blake3_256(&buf)
 }
 
+/// Plonky3-friendly binary Merkle tree, padded to the next power of
+/// two.
+///
+/// Constructed via [`MerkleTree::build_v1`] for production paths
+/// (domain-separated, sub-tree-bound) or [`MerkleTree::build`] for
+/// legacy pre-hashed inputs. Once built, the tree exposes
+/// [`MerkleTree::root`], [`MerkleTree::depth`], [`MerkleTree::leaves`],
+/// and [`MerkleTree::layers`] for witness construction.
 #[derive(Debug, Clone)]
 pub struct MerkleTree {
     leaves: Vec<Hash>,      // sorted, padded
@@ -89,12 +189,77 @@ pub struct MerkleTree {
 }
 
 impl MerkleTree {
-    /// Build a v1 domain-separated tree from canonical leaf payloads.
+    /// Builds a v1 domain-separated Merkle tree from canonical leaf
+    /// payloads.
     ///
     /// `payloads` is the raw canonical-encoded byte representation of
-    /// each leaf (NOT pre-hashed). Payloads are sorted by raw bytes for
-    /// determinism, then bound to their sorted index via
-    /// `leaf_hash_v2`. Duplicate payloads are rejected.
+    /// each leaf (NOT pre-hashed). The builder:
+    ///
+    /// 1. Sorts `payloads` lexicographically by raw bytes (deterministic
+    ///    ordering: two byte-different snapshots representing the same
+    ///    logical set produce the same root).
+    /// 2. Rejects duplicate payloads with
+    ///    [`BuildError::DuplicateLeafPayload`].
+    /// 3. Hashes each leaf via [`leaf_hash_v2(sub_tree_id, sorted_index,
+    ///    payload)`][leaf_hash_v2], binding the sorted index into the
+    ///    preimage.
+    /// 4. Pads to the next power of two with
+    ///    [`leaf_hash_v2(sub_tree_id, EMPTY_INDEX_SENTINEL, &[])`][leaf_hash_v2].
+    /// 5. Builds the binary tree with [`node_hash_v2`] at every internal
+    ///    node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::tree::MerkleTree;
+    /// let payloads = vec![b"alice".to_vec(), b"bob".to_vec()];
+    /// let tree = MerkleTree::build_v1(1, payloads)?;
+    /// assert_eq!(tree.depth(), 1);
+    /// # Ok::<(), omega_commitment_core::tree::BuildError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`BuildError::DuplicateLeafPayload`] when two distinct entries
+    ///   share canonical bytes after sorting. The semantic key for each
+    ///   sub-tree (txid+output_index, slot+block_hash, policy_id, etc.)
+    ///   is injected into the payload, so byte-identical payloads always
+    ///   indicate ingest-side data corruption.
+    ///
+    /// # Soundness
+    ///
+    /// `build_v1` preserves three invariants that v0.1 verifiers and
+    /// auditors rely on:
+    ///
+    /// - **Set-not-sequence semantics.** The leaf set determines the
+    ///   root. Sorting by raw bytes is the canonical ordering; a
+    ///   permutation of the input produces the same root. Two
+    ///   independent ingest pipelines that produce the same logical
+    ///   leaf set will produce the same Merkle root regardless of the
+    ///   order in which their parsers emitted entries.
+    /// - **Uniqueness.** No two leaves share canonical bytes. The
+    ///   builder rejects duplicates rather than silently deduplicating
+    ///   them, because byte-identical payloads with the protocol's
+    ///   semantic-key injection scheme indicates a data error upstream
+    ///   that must surface, not be masked.
+    /// - **Padding-leaf forgery resistance.** Padding leaves are
+    ///   computed via [`leaf_hash_v2`] with the
+    ///   [`EMPTY_INDEX_SENTINEL`] (`u64::MAX`) bound into the preimage.
+    ///   A verifier that knows the published `item_count` rejects any
+    ///   inclusion proof whose `canonical_index >= item_count`, so an
+    ///   adversary cannot present a padding slot as a real leaf. The
+    ///   v0.1 legacy [`Self::build`] path uses raw [`ZERO_HASH`] for
+    ///   padding and does NOT carry this protection.
+    ///
+    /// The output's [`Self::root`] is bound to `sub_tree_id`: the same
+    /// payload set built under a different `sub_tree_id` produces a
+    /// different root, so a leaf claimed against the wrong sub-tree
+    /// cannot be re-pointed at a sibling sub-tree's commitment.
+    ///
+    /// # Limitations
+    ///
+    /// Each individual `payloads[i]` MUST be ≤ 64 bytes for the v0.1
+    /// verifier circuit. See [`leaf_hash_v2`] for the boundary.
     pub fn build_v1(sub_tree_id: u8, mut payloads: Vec<Vec<u8>>) -> Result<Self, BuildError> {
         payloads.sort();
         // Reject duplicate canonical keys: in every sub-tree the unsorted
@@ -139,19 +304,37 @@ impl MerkleTree {
         }
     }
 
-    /// Build a tree from an unsorted set of pre-hashed leaves.
+    /// Builds a tree from an unsorted set of pre-hashed leaves
+    /// (legacy compatibility path).
     ///
     /// **Compatibility-only.** Retained for tests and CLI paths that
     /// already pre-hash their leaves. Does NOT apply v1 domain
-    /// separation and pads with `ZERO_HASH`. New production code MUST
+    /// separation and pads with [`ZERO_HASH`]. New production code MUST
     /// use [`Self::build_v1`] to obtain the `omega:v2:leaf` /
     /// `omega:v2:node` soundness guarantees; the inclusion-witness
-    /// verifier (`witness::InclusionWitness::verify`) will be migrated
-    /// to v1 as part of the v1.0 verifier-circuit work (track T6).
+    /// verifier ([`crate::witness::InclusionWitness::verify`]) will be
+    /// migrated to v1 as part of the v1.0 verifier-circuit work
+    /// (track T6).
     ///
-    /// The caller is responsible for ensuring uniqueness; duplicate
-    /// leaves are NOT deduplicated and will occupy distinct slots in
-    /// the tree, producing a different root than a deduplicated input.
+    /// # Examples
+    ///
+    /// ```
+    /// use omega_commitment_core::hash::blake3_256;
+    /// use omega_commitment_core::tree::MerkleTree;
+    /// let leaves = vec![blake3_256(b"a"), blake3_256(b"b")];
+    /// let tree = MerkleTree::build(leaves);
+    /// assert_eq!(tree.depth(), 1);
+    /// ```
+    ///
+    /// # Soundness
+    ///
+    /// This path is NOT soundness-bearing for production. The caller is
+    /// responsible for ensuring uniqueness; duplicate leaves are NOT
+    /// deduplicated and will occupy distinct slots in the tree,
+    /// producing a different root than a deduplicated input. Padding
+    /// uses raw [`ZERO_HASH`], which is trivially forge-able as the
+    /// "hash" of an unknown preimage; padding-leaf forgery is open on
+    /// this path. Use [`Self::build_v1`] in new code.
     pub fn build(input: Vec<Hash>) -> Self {
         Self::build_legacy(input)
     }
@@ -184,16 +367,18 @@ impl MerkleTree {
         }
     }
 
-    /// Sorted, padded leaves.
+    /// Returns the sorted, padded leaf hashes (layer 0).
     pub fn leaves(&self) -> &[Hash] {
         &self.leaves
     }
 
-    /// All layers from leaves (index 0) up to root layer.
+    /// Returns every layer from leaves (index 0) up to and including
+    /// the single-element root layer.
     pub fn layers(&self) -> &[Vec<Hash>] {
         &self.layers
     }
 
+    /// Returns the Merkle root.
     pub fn root(&self) -> Hash {
         *self
             .layers
@@ -203,10 +388,14 @@ impl MerkleTree {
             .expect("post-build: top layer is single root")
     }
 
+    /// Returns the depth of the tree (number of edges from leaf to
+    /// root). A single-leaf tree has depth `0`.
     pub fn depth(&self) -> usize {
         self.layers.len() - 1
     }
 
+    /// Returns the number of leaves after sorting and padding to the
+    /// next power of two.
     pub fn leaf_count(&self) -> usize {
         self.leaves.len()
     }

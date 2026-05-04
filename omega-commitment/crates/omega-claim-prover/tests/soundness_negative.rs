@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use omega_claim_prover::{
     prove_collection, prove_collection_with_trace_tamper, MembershipWitness, OmegaCommitment,
     ProverConfig, TraceTamper,

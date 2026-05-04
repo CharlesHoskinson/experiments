@@ -59,6 +59,17 @@ p3-poseidon2-air = { git = "https://github.com/Plonky3/Plonky3", rev = "fc774b10
 p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "fc774b10eb66b1e4b75a1825e1af7acb98bcc71a" }
 p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3", rev = "fc774b10eb66b1e4b75a1825e1af7acb98bcc71a" }
 
+# Workspace-level lints. Every harness crate inherits via
+# `[lints] workspace = true`, escalating to errors in CI under
+# `-D warnings`. Documentation hygiene is enforced by
+# `skills/local/omega-rustdoc-style/SKILL.md`.
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "warn"
+missing_crate_level_docs = "warn"
+
 # `soundness_negative.rs` intentionally proves malformed traces and then
 # checks verifier rejection. In debug builds p3-batch-stark's internal
 # `check_constraints` aborts in the prover before that verifier path runs.

@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use omega_claim_tx::{
     ClaimCollection, ClaimPublicInputs, ClaimTx, ClaimUtxo, ClaimWitness, ProofBytes,
 };

@@ -41,3 +41,6 @@ omega-claim-verifier = { path = "../omega-claim-verifier" }
 [[bench]]
 name = "bench_prove_p50"
 harness = false
+
+[lints]
+workspace = true

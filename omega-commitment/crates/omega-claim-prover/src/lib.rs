@@ -1,13 +1,71 @@
 #![forbid(unsafe_code)]
-
-//! Plonky3 proof harness for v0.1 Ω-Commitment membership claims.
+//! Plonky3 STARK prover for Merkle-inclusion claims against a published
+//! Ω-Commitment.
 //!
-//! v0.1 proves Merkle inclusion for leaf preimages whose full
-//! `omega:v2:leaf || sub_tree_id || leaf_index_be || payload_len_be || payload`
-//! preimage is at most one Blake3 compression block (64 bytes). That keeps the
-//! leaf preimage gluing explicit and small while `p3-blake3-air` constrains the
-//! Blake3 compression rows. Variable-length, multi-block leaf preimages are a
-//! v0.2 `LeafPreimageAir` task.
+//! # Overview
+//!
+//! `omega-claim-prover` produces proofs that a given leaf payload sits at a
+//! given `(sub_tree_id, leaf_index)` under a published commitment's per-sub-tree
+//! root. A proof is a [`ProofEnvelope`] (postcard-encoded into [`ProofBytes`])
+//! carrying the original commitment, the public inputs the proof is bound to,
+//! the field-encoded public values fed to Plonky3, and the underlying batched
+//! STARK proof bytes. The `omega-claim-verifier` crate consumes the same
+//! envelope.
+//!
+//! The prover runs two AIRs side-by-side in a single batched STARK:
+//!
+//! - [`OmegaMembershipAir`] — one row per Merkle path step, asserting the
+//!   per-step node hash, the leaf-index bit decomposition, and that the
+//!   terminal `current_node` equals the public per-sub-tree root.
+//! - [`OmegaBlake3Air`] — wraps `p3_blake3_air::Blake3Air` and discharges every
+//!   leaf-hash and node-hash compression. Membership rows send compression
+//!   tuples; Blake3 rows receive them. The shared LogUp argument (lookup name
+//!   `omega_blake3_compression_v1`) closes the loop.
+//!
+//! # Design context
+//!
+//! - OpenSpec change: [`add-proof-experiment-harness`][change].
+//! - Soundness fix in [PR #2][pr2]; review record in [`PR-2-REVIEW-v2.md`][rev].
+//! - Plonky3 reference layout: `var/upstream/Plonky3/examples/examples/prove_prime_field_31.rs`.
+//!
+//! [change]: ../../../openspec/changes/add-proof-experiment-harness/
+//! [pr2]: https://github.com/IntersectMBO/omega-commitment/pull/2
+//! [rev]: ../../../openspec/changes/add-proof-experiment-harness/PR-2-REVIEW-v2.md
+//!
+//! # Tier of trust
+//!
+//! Soundness-bearing. What [`prove_collection`] commits to determines what a
+//! downstream verifier (the `omega-claim-verifier` crate) is willing to
+//! accept. Every public function on the soundness path carries a
+//! `# Soundness` block.
+//!
+//! # v0.1 limitations
+//!
+//! - Leaf preimages MUST be ≤ 64 bytes — the `omega:v2:leaf || sub_tree_id ||
+//!   leaf_index_be || payload_len_be || payload` preimage fits in one Blake3
+//!   compression block. Variable-length leaves require a v0.2 `LeafPreimageAir`.
+//! - The earlier v0.1-pre-fix design treated `OmegaBlake3Air` as a separate,
+//!   ceremonial proof. Post-PR #2 it is a participant in the same batched
+//!   STARK, glued to membership rows by LogUp; without that gluing an adversary
+//!   could supply inconsistent compression inputs. See [`OmegaBlake3Air`].
+//! - `tree_depth` is encoded as `u8` in [`ClaimPublicInputs`]; sub-trees deeper
+//!   than 255 are rejected by [`ProverError::TreeDepthTooLarge`].
+//!
+//! # Conventions
+//!
+//! - Field: BabyBear (`p3_baby_bear::BabyBear`).
+//! - Extension: `BinomialExtensionField<BabyBear, 4>`.
+//! - DFT: `RecursiveDft` from `p3_monty_31`.
+//! - MMCS: Poseidon2-backed Merkle tree (`PaddingFreeSponge` over `Perm24`,
+//!   `TruncatedPermutation` over `Perm16`).
+//! - PCS: `TwoAdicFriPcs` with `FriParameters::new_benchmark_high_arity`.
+//! - Challenger: `DuplexChallenger` over `Perm24`.
+//! - Layout matches the upstream `prove_prime_field_31.rs` example with
+//!   `p3-batch-stark` for multi-AIR proofs.
+
+#![warn(missing_docs)]
+#![warn(rustdoc::broken_intra_doc_links)]
+#![warn(rustdoc::missing_crate_level_docs)]
 
 mod blake3_trace;
 
@@ -45,19 +103,46 @@ use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Maximum v0.1 Blake3 leaf preimage length (one compression block, 64 bytes).
 pub const MAX_V01_LEAF_PREIMAGE_LEN: usize = 64;
+/// Maximum v0.1 leaf payload length, derived from
+/// [`MAX_V01_LEAF_PREIMAGE_LEN`] minus the framing (`DOMAIN_LEAF`,
+/// `sub_tree_id` byte, `leaf_index_be`, `payload_len_be`).
 pub const MAX_V01_LEAF_PAYLOAD_LEN: usize = MAX_V01_LEAF_PREIMAGE_LEN
     - DOMAIN_LEAF.len()
     - 1
     - core::mem::size_of::<u64>()
     - core::mem::size_of::<u64>();
+/// Current envelope version produced and accepted by this crate.
+///
+/// # Changelog
+///
+/// - **v1** (pre-PR-2): public values carried only `(sub_tree_id, leaf_index)`
+///   and a Plonky3-internal binding. The membership AIR's per-step constraints
+///   were stubbed; `OmegaBlake3Air` was a separate ceremonial proof not glued
+///   to the membership trace.
+/// - **v2** (current, post-PR-2): public values are
+///   `(sub_tree_id, leaf_index_be, tree_depth, per_sub_tree_root, binding_words)`,
+///   the Blake3 AIR runs in the same batched STARK with LogUp gluing, and the
+///   membership AIR carries real per-step constraints terminating at
+///   `per_sub_tree_root`. v1 envelopes are rejected at parse time.
 pub const PROOF_ENVELOPE_VERSION: u8 = 2;
+/// Index of `sub_tree_id` in the public-values vector (one field element).
 pub const PUBLIC_SUB_TREE_ID_OFFSET: usize = 0;
+/// Index of the first byte of `leaf_index_be` (8 contiguous big-endian bytes).
 pub const PUBLIC_LEAF_INDEX_OFFSET: usize = PUBLIC_SUB_TREE_ID_OFFSET + 1;
+/// Index of `tree_depth` (one field element, ≤ 255).
 pub const PUBLIC_TREE_DEPTH_OFFSET: usize = PUBLIC_LEAF_INDEX_OFFSET + LEAF_INDEX_LEN;
+/// Index of the first byte of `per_sub_tree_root` (32 contiguous bytes).
 pub const PUBLIC_ROOT_OFFSET: usize = PUBLIC_TREE_DEPTH_OFFSET + 1;
+/// Index of the first word of the proof binding digest in the public-values
+/// vector. The binding digest commits `(commitment, public_inputs)` so a
+/// verifier rejects any envelope where the surrounding fields were rewritten
+/// without re-running the prover.
 pub const PROOF_BINDING_WORD_OFFSET: usize = PUBLIC_ROOT_OFFSET + HASH_LEN;
+/// Width of the binding digest in u32 words (32 words, one per Blake3 byte).
 pub const PROOF_BINDING_WORDS: usize = 32;
+/// Total public-values width: framing fields plus binding digest.
 pub const PROOF_PUBLIC_VALUE_COUNT: usize = PROOF_BINDING_WORD_OFFSET + PROOF_BINDING_WORDS;
 
 const SUB_TREE_COUNT: usize = 7;
@@ -88,6 +173,7 @@ const COL_IS_REAL_STEP: usize = COL_IS_FIRST_STEP + 1;
 const COL_IS_LAST_STEP: usize = COL_IS_REAL_STEP + 1;
 const NUM_MEMBERSHIP_COLS: usize = COL_IS_LAST_STEP + 1;
 
+/// The base field used throughout this crate (BabyBear, 31-bit prime).
 pub type Val = BabyBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 type Dft = RecursiveDft<Val>;
@@ -108,13 +194,40 @@ type Pcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
 type Challenger = DuplexChallenger<Val, Perm24, 24, 16>;
 type OmegaStarkConfig = StarkConfig<Pcs, Challenge, Challenger>;
 
+/// Published Ω-Commitment header: the seven sub-tree roots, their item /
+/// leaf counts, depths, and the bundled Blake3 root over the seven sub-tree
+/// roots.
+///
+/// # Soundness
+///
+/// `sub_tree_roots_blake3[i]` is the per-sub-tree root produced by
+/// `omega_commitment_core::tree::Tree::build_v1` for sub-tree `i+1` (sub-tree
+/// IDs are 1-indexed; ID `0` is reserved). Each root commits to its leaf set
+/// under the v2 domain-separated leaf-and-node hash; an honest prover binds a
+/// proof to one of these roots through `per_sub_tree_root` in
+/// [`ClaimPublicInputs`], and a verifier rejects any proof whose
+/// `per_sub_tree_root` does not match `sub_tree_roots_blake3[sub_tree_id - 1]`.
+///
+/// `bundle_root_blake3` is the Blake3 hash of the seven sub-tree roots
+/// concatenated in order; a verifier recomputes it and rejects if it differs.
+/// An adversary who substitutes a wrong sub-tree root therefore fails the
+/// bundle-root check before the STARK is even run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OmegaCommitment {
+    /// Blake3 hash of the seven `sub_tree_roots_blake3` concatenated in order.
     #[serde(with = "hex::serde")]
     pub bundle_root_blake3: Hash,
+    /// One Merkle root per sub-tree, indexed by `sub_tree_id - 1`.
     pub sub_tree_roots_blake3: [Hash; SUB_TREE_COUNT],
+    /// `item_counts[i]` is the number of distinct items inserted into
+    /// sub-tree `i+1`. A `leaf_index` ≥ `item_counts[i]` is a padding leaf
+    /// and cannot be proven.
     pub item_counts: [u64; SUB_TREE_COUNT],
+    /// `leaf_counts[i]` is the padded leaf count for sub-tree `i+1`,
+    /// equal to the number of leaves at the bottom of the Merkle tree.
     pub leaf_counts: [u64; SUB_TREE_COUNT],
+    /// `tree_depths[i]` is the depth of sub-tree `i+1`, i.e. the number
+    /// of node-hash steps from leaf to root. Bound to v0.1's u8 public-input.
     pub tree_depths: [u32; SUB_TREE_COUNT],
 }
 
@@ -141,15 +254,23 @@ impl OmegaCommitment {
     }
 }
 
+/// One Merkle-inclusion claim's witness: public inputs, leaf payload, and the
+/// sibling path from leaf to root.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MembershipWitness {
+    /// Public inputs the proof is bound to. The prover validates these against
+    /// the commitment in [`prove_collection`] before trace generation.
     pub public: ClaimPublicInputs,
+    /// Raw leaf payload (≤ [`MAX_V01_LEAF_PAYLOAD_LEN`] bytes in v0.1).
     pub leaf_payload: Vec<u8>,
+    /// Sibling-hash path from leaf to root, ordered leaf-to-root. Length
+    /// must equal the commitment's `tree_depths[sub_tree_id - 1]`.
     #[serde(with = "omega_commitment_core::serde_helpers::hex_vec_hash")]
     pub merkle_path: Vec<Hash>,
 }
 
 impl MembershipWitness {
+    /// Builds a witness from a commitment-core [`InclusionWitness`].
     pub fn from_inclusion(
         public: ClaimPublicInputs,
         leaf_payload: Vec<u8>,
@@ -163,8 +284,11 @@ impl MembershipWitness {
     }
 }
 
+/// Prover configuration. Carries the RNG seed used to derive the Poseidon2
+/// permutations (challenger, sponge, compression).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProverConfig {
+    /// Seed for `SmallRng` driving Poseidon2 round-constant derivation.
     pub rng_seed: u64,
 }
 
@@ -174,87 +298,270 @@ impl Default for ProverConfig {
     }
 }
 
+/// Trace-mutation kinds used exclusively by `tests/soundness_negative.rs` to
+/// confirm verifier rejection of AIR-layer tampering.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TraceTamper {
+    /// Flip one byte in the payload column.
     PayloadByte,
+    /// Flip one byte in the sibling-hash column.
     SiblingByte,
+    /// Flip one byte in the current-node column.
     CurrentNodeByte,
+    /// Flip one byte in the leaf-index column.
     LeafIndexByte,
 }
 
+/// Errors returned by [`prove_collection`].
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProverError {
+    /// `sub_tree_id` was 0 or > 7. Sub-tree IDs are 1-indexed.
     #[error("unknown sub-tree id {sub_tree_id}")]
-    UnknownSubTree { sub_tree_id: u8 },
+    UnknownSubTree {
+        /// The rejected sub-tree id.
+        sub_tree_id: u8,
+    },
+    /// The full v2 leaf preimage (`DOMAIN_LEAF || sub_tree_id ||
+    /// leaf_index_be || payload_len_be || payload`) for witness `witness_index`
+    /// exceeds the v0.1 single-block limit of 64 bytes.
     #[error("witness {witness_index} leaf preimage length {actual} exceeds v0.1 limit {limit}")]
     LeafTooLargeForV01 {
+        /// Computed preimage length.
         actual: usize,
+        /// Cap (currently 64).
         limit: usize,
+        /// Index of the offending witness in the input slice.
         witness_index: usize,
     },
+    /// `leaf_index` is at or past the sub-tree's `item_count`; the leaf would
+    /// be a padding leaf and cannot be proven.
     #[error("witness {witness_index} leaf_index {leaf_index} exceeds item_count {item_count}")]
     LeafIndexOutOfRange {
+        /// Index of the offending witness.
         witness_index: usize,
+        /// Out-of-range leaf index.
         leaf_index: u64,
+        /// `item_count` recorded in the commitment for the target sub-tree.
         item_count: u64,
     },
+    /// The witness's `merkle_path.len()` does not match the commitment's
+    /// recorded depth for the target sub-tree.
     #[error(
         "witness {witness_index} path depth {actual} does not match commitment depth {expected}"
     )]
     PathDepthMismatch {
+        /// Index of the offending witness.
         witness_index: usize,
+        /// Commitment-recorded depth.
         expected: usize,
+        /// Witness-supplied path length.
         actual: usize,
     },
+    /// The witness's Merkle path, walked from the leaf hash with the path
+    /// directions implied by `leaf_index`, does not terminate at the committed
+    /// per-sub-tree root.
     #[error(
         "witness {witness_index} Merkle path does not terminate at the committed sub-tree root"
     )]
-    PathMismatch { witness_index: usize },
+    PathMismatch {
+        /// Index of the offending witness.
+        witness_index: usize,
+    },
+    /// `ClaimPublicInputs::bundle_root_blake3` differs from the commitment's
+    /// `bundle_root_blake3`.
     #[error("claim public bundle root does not match commitment for witness {witness_index}")]
-    PublicBundleRootMismatch { witness_index: usize },
+    PublicBundleRootMismatch {
+        /// Index of the offending witness.
+        witness_index: usize,
+    },
+    /// `ClaimPublicInputs::per_sub_tree_root` differs from
+    /// `commitment.sub_tree_roots_blake3[sub_tree_id - 1]`.
     #[error("claim public sub-tree root does not match commitment for witness {witness_index}")]
-    PublicSubTreeRootMismatch { witness_index: usize },
+    PublicSubTreeRootMismatch {
+        /// Index of the offending witness.
+        witness_index: usize,
+    },
+    /// `ClaimPublicInputs::tree_depth` differs from the commitment's recorded
+    /// depth for the target sub-tree.
     #[error("claim public tree depth does not match commitment for witness {witness_index}")]
-    PublicTreeDepthMismatch { witness_index: usize },
+    PublicTreeDepthMismatch {
+        /// Index of the offending witness.
+        witness_index: usize,
+    },
+    /// The commitment's recorded depth for the target sub-tree exceeds 255,
+    /// the v0.1 `u8` public-input encoding.
     #[error(
         "commitment tree depth {depth} for witness {witness_index} exceeds v0.1 u8 public input"
     )]
-    TreeDepthTooLarge { witness_index: usize, depth: u32 },
+    TreeDepthTooLarge {
+        /// Index of the offending witness.
+        witness_index: usize,
+        /// Commitment-recorded depth.
+        depth: u32,
+    },
+    /// The commitment's `bundle_root_blake3` does not equal the recomputed
+    /// hash of `sub_tree_roots_blake3`. The commitment is malformed.
     #[error("commitment bundle root mismatch: expected {expected_hex}, actual {actual_hex}", expected_hex = hex::encode(expected), actual_hex = hex::encode(actual))]
-    CommitmentMismatch { expected: Hash, actual: Hash },
+    CommitmentMismatch {
+        /// Bundle root the commitment claims.
+        expected: Hash,
+        /// Bundle root recomputed from the seven sub-tree roots.
+        actual: Hash,
+    },
+    /// Postcard could not serialize the Plonky3 proof or envelope. Internal,
+    /// not adversary-reachable.
     #[error("cannot serialize Plonky3 proof envelope: {0}")]
     Serialize(String),
 }
 
+/// Wire format for a proof: postcard-serialized into [`ProofBytes`].
+///
+/// The verifier checks `version == PROOF_ENVELOPE_VERSION`, that
+/// `commitment.bundle_root_blake3` matches the recomputed bundle root, that
+/// every `public_inputs[i]` is consistent with `commitment`, that
+/// `public_values[i]` matches the field encoding of `public_inputs[i]`
+/// (including the binding digest at [`PROOF_BINDING_WORD_OFFSET`]), and
+/// finally invokes `p3_batch_stark::verify_batch`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProofEnvelope {
+    /// Envelope version. See [`PROOF_ENVELOPE_VERSION`] for the v1 → v2
+    /// transition.
     pub version: u8,
+    /// Prover RNG / config used to derive the Poseidon2 permutations. Bound
+    /// into the envelope so a verifier reproduces the same permutations.
     pub config: ProverConfig,
+    /// The Ω-Commitment the proof is bound to.
     pub commitment: OmegaCommitment,
+    /// One [`ClaimPublicInputs`] per membership claim in the batch.
     pub public_inputs: Vec<ClaimPublicInputs>,
+    /// Field-encoded public values fed to the membership AIRs, layout per the
+    /// `PUBLIC_*_OFFSET` and `PROOF_BINDING_WORD_OFFSET` constants. The Blake3
+    /// AIR participates in the same batch but takes no public values.
     pub public_values: Vec<Vec<u32>>,
+    /// Postcard-encoded `BatchProof` from `p3_batch_stark::prove_batch`.
     pub stark_proof: Vec<u8>,
 }
 
+/// Membership AIR: proves one Merkle inclusion per execution.
+///
+/// One row per Merkle path step. Padding rows beyond the last real step are
+/// constrained to be all zeros (so they cannot smuggle constraint-satisfying
+/// state across the trace boundary).
+///
+/// # Trace columns
+///
+/// Layout indices, all module-private constants (kept here for documentation
+/// purposes; the values are derived sequentially from `COL_SUB_TREE_ID = 0`):
+///
+/// - `COL_SUB_TREE_ID` — the sub-tree id, asserted-equal to the public input.
+/// - `COL_LEAF_INDEX_BE` (8 bytes) — leaf index, big-endian, asserted-equal to
+///   the public input.
+/// - `COL_REMAINING_INDEX_BITS` (64 bits) — bit decomposition of the remaining
+///   leaf index after `step` shifts. First-row bits are constrained to repack
+///   to `leaf_index`; transition shifts the array right by one.
+/// - `COL_PATH_STEP_INDEX` — current path step. `0` in the first row,
+///   `prev + 1` in each transition.
+/// - `COL_TREE_DEPTH` — asserted-equal to the public tree depth.
+/// - `COL_PAYLOAD_LEN`, `COL_PAYLOAD_LEN_SELECTOR` — one-hot length selector
+///   and the implied length, gated so payload bytes past the active length
+///   are zero.
+/// - `COL_PAYLOAD` ([`MAX_V01_LEAF_PAYLOAD_LEN`] bytes) — leaf payload bytes.
+/// - `COL_PREV_NODE`, `COL_SIBLING`, `COL_LEFT_NODE`, `COL_RIGHT_NODE`,
+///   `COL_NODE_MID`, `COL_CURRENT_NODE` (32 bytes each) — Merkle path
+///   intermediates.
+/// - `COL_DIRECTION_BIT` — `leaf_index` bit selecting the swap of
+///   `(prev_node, sibling)` into `(left, right)`.
+/// - `COL_HAS_NODE_HASH` — 1 if the row performs a node compression (real path
+///   step), 0 if the path was depth-0 and the leaf is itself the root.
+/// - `COL_IS_FIRST_STEP`, `COL_IS_REAL_STEP`, `COL_IS_LAST_STEP` — boolean row
+///   flags.
+///
+/// # Constraints
+///
+/// `eval` enforces, in order:
+///
+/// 1. **Boolean flags.** `is_first_step`, `is_real_step`, `is_last_step`,
+///    `has_node_hash`, `direction_bit` are each booleans.
+/// 2. **First-row anchoring.** Row 0 is real, has `is_first_step = 1`, and
+///    `path_step_index = 0`.
+/// 3. **Public-input pin (real rows).** `sub_tree_id`, `leaf_index_be`, and
+///    `tree_depth` columns equal their public-value counterparts. The
+///    payload-length one-hot selector sums to 1 and `payload[i] = 0` for `i ≥
+///    selected length`.
+/// 4. **Leaf-index bit decomposition (first row).** The 64-bit
+///    `remaining_index_bits` repacks byte-by-byte to the public `leaf_index`.
+/// 5. **Direction-bit / left-right swap (node-active rows).**
+///    `direction_bit = remaining_index_bits[0]`. If `direction_bit == 0`,
+///    `(left, right) = (prev_node, sibling)`; otherwise
+///    `(left, right) = (sibling, prev_node)`.
+/// 6. **Padding rows with no node.** When `has_node_hash = 0` but the row is
+///    real, the path is depth-0: `current_node = prev_node`, sibling and
+///    intermediates are zero, `tree_depth = 0`.
+/// 7. **Last-row root match.** On the last real row,
+///    `path_step_index + has_node_hash = tree_depth` and
+///    `current_node = public[PUBLIC_ROOT_OFFSET..]`.
+/// 8. **Transition.** `is_first_step` is 0 on every non-first row. Real rows
+///    transition to real rows until `is_last_step`, then to padding;
+///    `path_step_index` increments by 1; `prev_node_next = current_node_local`;
+///    `remaining_index_bits` shifts right by 1, top bit becomes 0.
+/// 9. **Padding rows are all zero.** Every column is zero on a row where
+///    `is_real_step = 0`.
+///
+/// The per-step Merkle node hash itself (`current_node = node_hash_v2(left,
+/// right)`) and the leaf hash (`prev_node_first_row = leaf_hash_v2(...)`) are
+/// not enforced by polynomial constraints inside this AIR; they are discharged
+/// by LogUp lookups (see [`LookupAir`] impl) into [`OmegaBlake3Air`]. Without
+/// the lookup, the AIR's `eval` would be under-constrained.
 #[derive(Debug, Clone, Default)]
 pub struct OmegaMembershipAir {
     num_lookups: usize,
 }
 
+/// Blake3 compression AIR: the v0.1 prover's hash gadget.
+///
+/// Wraps `p3_blake3_air::Blake3Air` with the same column count
+/// (`p3_blake3_air::NUM_BLAKE3_COLS`). It participates in the batched STARK as
+/// a `Send` end of the LogUp interaction named `omega_blake3_compression_v1`;
+/// every leaf-hash and node-hash compression that an [`OmegaMembershipAir`]
+/// references is matched 1:1 with a row of this AIR's trace.
+///
+/// Pre-PR-2 the v0.1 design produced a separate ceremonial Blake3 proof.
+/// Post-fix this is a participant in the same batched STARK; the LogUp
+/// imbalance check fails verification if compression rows and membership rows
+/// disagree.
 #[derive(Debug, Clone, Default)]
 pub struct OmegaBlake3Air {
     num_lookups: usize,
 }
 
+/// Either AIR participating in the batched STARK.
+///
+/// Returned by [`proof_airs`] in the order
+/// `[Membership × N, Blake3]`, matching the trace order in
+/// [`prove_collection`].
 #[derive(Debug, Clone)]
 pub enum OmegaProofAir {
+    /// One membership AIR per claim in the batch.
     Membership(OmegaMembershipAir),
+    /// The shared Blake3 compression AIR.
     Blake3(OmegaBlake3Air),
 }
 
-/// Returns one membership AIR per public input followed by the shared Blake3
-/// compression AIR used by the global LogUp interaction.
+/// Returns the AIR list for a batched proof of `membership_count` claims.
+///
+/// The list is `[Membership × membership_count, Blake3]`. The trace vector
+/// passed to `p3_batch_stark::prove_batch` must follow the same ordering.
+///
+/// # Examples
+///
+/// ```
+/// use omega_claim_prover::{proof_airs, OmegaProofAir};
+/// let airs = proof_airs(3);
+/// assert_eq!(airs.len(), 4);
+/// assert!(matches!(airs.last(), Some(OmegaProofAir::Blake3(_))));
+/// ```
 pub fn proof_airs(membership_count: usize) -> Vec<OmegaProofAir> {
     let mut airs = Vec::with_capacity(membership_count + 1);
     airs.extend(
@@ -304,6 +611,24 @@ impl<F> BaseAir<F> for OmegaProofAir {
     }
 }
 
+/// Implements the per-row constraints summarised on [`OmegaMembershipAir`].
+///
+/// # Soundness
+///
+/// `eval` enforces every numbered item in the [`OmegaMembershipAir`] contract
+/// using only polynomial constraints over the trace. The only cryptographic
+/// claims it does *not* enforce in-place are:
+///
+/// - `current_node = node_hash_v2(left, right)` on node-active rows.
+/// - `prev_node = leaf_hash_v2(sub_tree_id, leaf_index, payload)` on the first
+///   row.
+///
+/// These two are discharged by LogUp lookups into [`OmegaBlake3Air`]: the
+/// `LookupAir` impl sends one lookup tuple per leaf compression and two per
+/// node hash (the v2 leaf-and-node preimages span at most one and exactly two
+/// Blake3 compression blocks respectively), and `OmegaBlake3Air` supplies the
+/// matching outputs. An adversary who feeds inconsistent compression bytes
+/// produces a LogUp imbalance and fails verification.
 impl<AB: AirBuilder> Air<AB> for OmegaMembershipAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
@@ -546,6 +871,79 @@ impl<F: Field> LookupAir<F> for OmegaProofAir {
     }
 }
 
+/// Produces a batched STARK proof of Merkle inclusion for every witness in
+/// `witnesses` against `commitment`.
+///
+/// The output is a postcard-encoded [`ProofEnvelope`], wrapped in
+/// [`ProofBytes`]. The `omega-claim-verifier` crate consumes the same
+/// envelope.
+///
+/// # Errors
+///
+/// Returns:
+///
+/// - [`ProverError::CommitmentMismatch`] when `commitment.bundle_root_blake3`
+///   does not equal the recomputed Blake3 hash of `sub_tree_roots_blake3`.
+/// - [`ProverError::UnknownSubTree`] when a witness references a sub-tree id
+///   outside `1..=7`.
+/// - [`ProverError::LeafTooLargeForV01`] when a witness's full v2 leaf
+///   preimage exceeds [`MAX_V01_LEAF_PREIMAGE_LEN`] bytes.
+/// - [`ProverError::LeafIndexOutOfRange`] when `leaf_index >= item_count`.
+/// - [`ProverError::PathDepthMismatch`] when the witness's `merkle_path.len()`
+///   differs from the commitment's recorded depth.
+/// - [`ProverError::PathMismatch`] when walking the Merkle path with the
+///   `leaf_index` directions does not yield the committed sub-tree root.
+/// - [`ProverError::PublicBundleRootMismatch`],
+///   [`ProverError::PublicSubTreeRootMismatch`],
+///   [`ProverError::PublicTreeDepthMismatch`] when the witness's
+///   [`ClaimPublicInputs`] disagree with the commitment.
+/// - [`ProverError::TreeDepthTooLarge`] when the commitment records a depth
+///   greater than 255.
+/// - [`ProverError::Serialize`] when postcard fails to encode the Plonky3
+///   proof or the envelope (internal; not adversary-reachable).
+///
+/// # Soundness
+///
+/// On `Ok(proof_bytes)` the prover commits to the following public values
+/// (encoded into `ProofEnvelope::public_values`, with the layout indices given
+/// by the `PUBLIC_*_OFFSET` constants):
+///
+/// - `sub_tree_id` at [`PUBLIC_SUB_TREE_ID_OFFSET`].
+/// - `leaf_index_be` at [`PUBLIC_LEAF_INDEX_OFFSET`] (8 big-endian bytes).
+/// - `tree_depth` at [`PUBLIC_TREE_DEPTH_OFFSET`].
+/// - `per_sub_tree_root` at [`PUBLIC_ROOT_OFFSET`] (32 bytes).
+/// - The 32-word binding digest at [`PROOF_BINDING_WORD_OFFSET`], a Blake3
+///   hash of the domain tag `"omega:proof:v2:binding" || commitment ||
+///   public_inputs[..]`.
+///
+/// The proof attests to the existence of a witness `(payload, merkle_path)`
+/// such that:
+///
+/// 1. `leaf_hash_v2(sub_tree_id, leaf_index, payload)` (v2 domain-tagged
+///    Blake3 leaf compression, glued via LogUp into [`OmegaBlake3Air`]) equals
+///    the first-row `prev_node`.
+/// 2. For each `i` in `0..tree_depth`, `current_node_i =
+///    node_hash_v2(left_i, right_i)` where `(left_i, right_i)` is the swap of
+///    `(prev_node_i, sibling_i)` keyed by `leaf_index`'s `i`-th bit. Each
+///    `node_hash_v2` consumes two Blake3 compression rows (the v2 node
+///    preimage spans two blocks: 4-byte domain tag + 32-byte left + 32-byte
+///    right).
+/// 3. The terminal `current_node` equals `per_sub_tree_root`.
+///
+/// The Blake3 compressions in items 1 and 2 are bound to the embedded
+/// [`OmegaBlake3Air`] permutation rows by LogUp; an adversary who supplies
+/// inconsistent compression inputs causes the LogUp imbalance check to fail
+/// during `verify_batch`.
+///
+/// The binding digest commits `(commitment, public_inputs)` into the public
+/// values; an adversary who rewrites `ProofEnvelope::public_inputs` after the
+/// fact triggers public-input-mismatch on the verifier side because the
+/// recomputed binding digest no longer matches.
+///
+/// # Limitations
+///
+/// v0.1 caps every leaf preimage at 64 bytes (one Blake3 compression block).
+/// Variable-length leaves require the v0.2 `LeafPreimageAir`.
 pub fn prove_collection(
     commitment: &OmegaCommitment,
     witnesses: &[MembershipWitness],
@@ -554,6 +952,12 @@ pub fn prove_collection(
     prove_collection_inner(commitment, witnesses, config, None)
 }
 
+/// Test-only entry point used by `tests/soundness_negative.rs` to build proofs
+/// over deliberately mutated traces.
+///
+/// Hidden from `cargo doc`; not part of the crate's public API. The function
+/// is `pub` only because Rust visibility cannot express "pub within the
+/// workspace's tests, private outside".
 #[doc(hidden)]
 pub fn prove_collection_with_trace_tamper(
     commitment: &OmegaCommitment,
@@ -909,6 +1313,19 @@ fn proof_public_values(
         .collect()
 }
 
+/// Computes the 32-word binding digest for `(commitment, public_inputs)`.
+///
+/// The verifier recomputes the same digest and rejects if the envelope's
+/// `public_values[i][PROOF_BINDING_WORD_OFFSET..]` differs.
+///
+/// # Soundness
+///
+/// The digest commits the full commitment header (bundle root, sub-tree
+/// roots, item counts, leaf counts, tree depths) and the full
+/// `public_inputs` slice. An adversary cannot rewrite either the commitment
+/// or the public inputs in the envelope without producing a different
+/// digest; verification fails because the in-proof binding words still
+/// reflect the original tuple.
 pub fn proof_binding_words(
     commitment: &OmegaCommitment,
     public_inputs: &[ClaimPublicInputs],

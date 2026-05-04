@@ -1,24 +1,26 @@
-//! Reusable serde adapters for hash-typed fields.
-//!
-//! - `hex_vec_hash`: serialize/deserialize `Vec<Hash>` as JSON array of
-//!   lowercase hex strings.
-//! - `opt_hex`: serialize/deserialize `Option<[u8; 32]>` as a hex string
-//!   or `null`.
+//! Internal serde adapters for hash-typed fields. Not part of the
+//! public API; exposed `pub` only because Rust's visibility model
+//! cannot express "pub within crate, private outside" for `#[serde(with
+//! = ...)]` paths.
+#![doc(hidden)]
 
 use crate::hash::Hash;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Serde adapter for `Vec<Hash>` -> JSON array of hex strings.
+/// Serde adapter: `Vec<Hash>` ↔ JSON array of lowercase hex strings.
 ///
 /// Use as `#[serde(with = "crate::serde_helpers::hex_vec_hash")]`.
+#[doc(hidden)]
 pub mod hex_vec_hash {
     use super::*;
 
+    #[doc(hidden)]
     pub fn serialize<S: Serializer>(v: &[Hash], s: S) -> Result<S::Ok, S::Error> {
         let strs: Vec<String> = v.iter().map(hex::encode).collect();
         strs.serialize(s)
     }
 
+    #[doc(hidden)]
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Hash>, D::Error> {
         let strs: Vec<String> = Vec::deserialize(d)?;
         strs.iter()
@@ -45,10 +47,12 @@ pub mod hex_vec_hash {
 /// deserialize, sidestepping the buffered-path limitation.
 ///
 /// Use as `#[serde(with = "crate::serde_helpers::u128_dec")]`.
+#[doc(hidden)]
 pub mod u128_dec {
     use serde::{de, Deserializer, Serializer};
     use std::fmt;
 
+    #[doc(hidden)]
     pub fn serialize<S: Serializer>(v: &u128, s: S) -> Result<S::Ok, S::Error> {
         // Encode as a decimal string so the wire form fits in any JSON
         // consumer regardless of u128 support. (Cardano u128 values can
@@ -56,6 +60,7 @@ pub mod u128_dec {
         s.serialize_str(&v.to_string())
     }
 
+    #[doc(hidden)]
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u128, D::Error> {
         struct V;
         impl<'de> de::Visitor<'de> for V {
@@ -89,12 +94,14 @@ pub mod u128_dec {
     }
 }
 
-/// Serde adapter for `Option<[u8; 32]>` -> hex string or null.
+/// Serde adapter: `Option<[u8; 32]>` ↔ hex string or `null`.
 ///
 /// Use as `#[serde(with = "crate::serde_helpers::opt_hex", default)]`.
+#[doc(hidden)]
 pub mod opt_hex {
     use super::*;
 
+    #[doc(hidden)]
     pub fn serialize<S: Serializer>(v: &Option<[u8; 32]>, s: S) -> Result<S::Ok, S::Error> {
         match v {
             None => s.serialize_none(),
@@ -102,6 +109,7 @@ pub mod opt_hex {
         }
     }
 
+    #[doc(hidden)]
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<[u8; 32]>, D::Error> {
         let opt: Option<String> = Option::deserialize(d)?;
         match opt {
