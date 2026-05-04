@@ -16,8 +16,23 @@ Implementation order. Each task is gated on the previous one passing `cargo test
 - [x] 2.1 Pin Plonky3 in workspace `[workspace.dependencies]` once: `plonky3 = { git = "https://github.com/Plonky3/Plonky3", rev = "<40-char-hash captured at first build>" }`. Every harness crate consumes via `workspace = true` (single source of truth — no per-crate independent rev).
 - [x] 2.2 Create `crates/omega-claim-prover/` with deps on `p3-uni-stark`, `p3-baby-bear`, `p3-poseidon2`, `p3-poseidon2-air`, `p3-blake3-air`, `p3-merkle-tree`, `p3-symmetric`, `p3-fri`, `p3-challenger`, `p3-commit`, `p3-field`, `p3-matrix`, `p3-dft` — all via `workspace = true`.
 - [x] 2.3 Define `OmegaMembershipAir` implementing `p3_air::Air<AB>`. Trace columns: sub_tree_id, leaf_index_be, payload buffer (capped so the full v1 leaf preimage is ≤ 64 bytes), intermediate Blake3 compression state, sibling-hash buffer, current-node hash. One row per Merkle path step.
-- [ ] 2.4 Wire the AIR up to `p3-blake3-air` via permutation argument so leaf-hash and node-hash *compressions* are discharged by the upstream Blake3 gadget. Add an explicit comment that this constrains the compression function only; preimage gluing for ≤ 64-byte leaves is checked deterministically by the verifier (no separate AIR needed because the preimage fits in one compression block).
-- Implementation note 2026-05-03: the current batch emits a separate `p3-blake3-air` compression proof inside the proof envelope and keeps deterministic preimage/path gluing in the verifier boundary. The task remains open until the membership AIR and Blake3 compression rows are joined by an actual Plonky3 permutation argument.
+- [x] 2.4 Wire the AIR up to `p3-blake3-air` via permutation argument so leaf-hash and node-hash *compressions* are discharged by the upstream Blake3 gadget. For v0.1, one-block leaf preimages and two-block node hashes are glued in-circuit through LogUp; variable-length leaf preimages remain a v0.2 `LeafPreimageAir` task.
+- Implementation note 2026-05-03: option 1(a) superseded the earlier verifier-boundary gluing note. `OmegaMembershipAir` now proves the one-block leaf preimage and every two-block node hash in-circuit by LogUp lookups against the shared `OmegaBlake3Air`, and `tests/soundness_negative.rs` rejects payload, sibling, current-node, and leaf-index trace mutations.
+
+#### Soundness sub-tasks (PR #2 review, P0 — option 1a)
+
+The PR-2 review (`PR-2-REVIEW.md`) found the membership AIR is content-free: it constrains only `IS_REAL_STEP`-bool, first-row `sub_tree_id`, an accumulator transition `next.acc = local.acc * 257 + next.checksum`, and last-row `acc == public[1]`. The columns holding `LEAF_INDEX_BE`, `PAYLOAD`, `BLAKE3_STATE`, `SIBLING`, `CURRENT_NODE` are written by `fill_real_row` but never constrained to equal Blake3 of any preimage, never tied to `node_hash_v2`, never forced to terminate at any sub-tree root. A malicious prover skipping `validate_witnesses` and filling those columns with arbitrary bytes produces an accepting proof for any `(sub_tree_id, leaf_index, nullifier, recipient)`. Closing this is the v0.1 soundness gate.
+
+Option 1a — make the AIR actually prove what `OmegaMembershipAir` claims — break into:
+
+- [x] 2.4.1 In `omega-claim-prover/src/lib.rs`, replace the `acc * 257 + checksum` accumulator with real per-step constraints: each `IS_REAL_STEP` row asserts `current_node = node_hash_v2(left, right)` where `(left, right)` come from `(prev_current_node, sibling)` swapped by a `BIT` column representing the path direction (least-significant bit of `leaf_index_be` shifted right by step index). The first real row asserts `current_node = leaf_hash_v2(sub_tree_id, leaf_index_be, payload)`.
+- [x] 2.4.2 Add a `path_step_index` column. Constrain it to start at 0 in the first real row, increment by 1 each step, and end at `tree_depth - 1` (where `tree_depth` becomes a public input bound from the call-site sub-tree's `item_count`). Assert the last real row's `current_node` equals `public[2]` = the per-sub-tree root pinned in genesis.
+- [x] 2.4.3 Bind `node_hash_v2` and `leaf_hash_v2` to the embedded `p3-blake3-air` compression rows via a Plonky3 permutation argument (one cross-table lookup per hash invocation). The compression-input bytes go into the lookup table; the compression output goes back. This is the gluing step the v3.1 design names but the v0.1 implementation skipped.
+- [x] 2.4.4 Extend `ClaimPublicInputs` with `tree_depth: u8` and `per_sub_tree_root: [u8; 32]`. Update `omega-claim-tx` accordingly, regenerate CBOR golden tests in `omega-claim-tx/tests/`. Update the verifier to surface these as `VerifyError::WrongSubTreeRoot` on mismatch and `VerifyError::DepthMismatch` on tree-depth mismatch.
+- [x] 2.4.5 Add `tests/soundness_negative.rs` to `omega-claim-prover/`: build a 256-leaf sub-tree, prove inclusion of leaf 42, then mutate `(payload, sibling, current_node, leaf_index_be)` columns one at a time in the trace and confirm the verifier rejects each mutation. (The current "tampered proof byte" test only catches Plonky3-layer tampering; this catches AIR-layer tampering.)
+- [x] 2.4.6 Document in the prover's `lib.rs` module header that v0.1 caps leaf preimages at 64 bytes (one Blake3 compression block); v0.2 lands `LeafPreimageAir` for variable-length leaves.
+- [x] 2.4.7 Run the existing `tests/prover_smoke.rs` + `omega-claim-verifier/tests/verifier_roundtrip.rs` against the constrained AIR; both must still pass.
+- [x] 2.4.8 Re-tick task 3.4 once 2.4.1–2.4.7 land — the verifier's "rejects tampered proof" scenario then carries real soundness, not just envelope-binding hygiene.
 - [x] 2.5 Implement `prove_collection(commitment, witnesses, config) -> Result<ProofBytes, ProverError>` using `p3_uni_stark::prove`. Reject witnesses with leaf payloads that would push the preimage past 64 bytes with `ProverError::LeafTooLargeForV01`.
 - [x] 2.6 Match the prover config to `var/upstream/Plonky3/examples/examples/prove_prime_field_31.rs` (BabyBear, Poseidon2 Merkle, recursive-DFT, default FRI).
 - [x] 2.7 Add `tests/prover_smoke.rs`: build a 256-leaf synthetic UTxO sub-tree with `omega-commitment-core::Tree::build_v1`, prove inclusion of leaf 42, assert proof bytes non-empty.
@@ -25,11 +40,13 @@ Implementation order. Each task is gated on the previous one passing `cargo test
 
 ## 3. omega-claim-verifier
 
-- [ ] 3.1 Create `crates/omega-claim-verifier/` with the same Plonky3 deps as the prover.
-- [ ] 3.2 Implement `verify(commitment, public_inputs, proof) -> Result<(), VerifyError>` using `p3_uni_stark::verify` with the same AIR.
-- [ ] 3.3 No tokio, no async, no I/O in the public surface.
-- [ ] 3.4 Add `tests/verifier_round_trip.rs`: prove → verify accepts; tampered proof byte → `Err(InvalidProof)`; wrong commitment → `Err(CommitmentMismatch)`.
+- [x] 3.1 Create `crates/omega-claim-verifier/` with the same Plonky3 deps as the prover.
+- [x] 3.2 Implement `verify(commitment, public_inputs, proof) -> Result<(), VerifyError>` using `p3_uni_stark::verify` with the same AIR.
+- [x] 3.3 No tokio, no async, no I/O in the public surface.
+- [x] 3.4 Add `tests/verifier_round_trip.rs`: prove → verify accepts; tampered proof byte → `Err(InvalidProof)`; wrong commitment → `Err(CommitmentMismatch)`.
+- Implementation note 2026-05-03: verifier task 3.4 also covers a proof-envelope binding regression where public inputs are rewritten to match call arguments while the Plonky3 proof is left unchanged; this now returns `Err(InvalidProof)` because `(commitment, public_inputs)` is bound into the proof public values.
 - [ ] 3.5 Add `bench_verify_p50.rs` measuring verify latency at 1, 16, 256 leaves; assert verify p50 < 500 ms on the developer laptop.
+- Implementation note 2026-05-03: `bench_verify_p50.rs` exists and compiles with `cargo bench -p omega-claim-verifier --bench bench_verify_p50 --no-run`; the task remains open until the benchmark is run and the p50 assertion is backed by local measurements.
 
 ## 4. omega-mock-ledger (SQLite + state machine)
 

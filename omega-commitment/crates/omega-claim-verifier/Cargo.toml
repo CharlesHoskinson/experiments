@@ -1,5 +1,5 @@
 [package]
-name = "omega-claim-prover"
+name = "omega-claim-verifier"
 version = "0.11.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -7,10 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+omega-claim-prover = { path = "../omega-claim-prover" }
 omega-claim-tx = { path = "../omega-claim-tx" }
-omega-commitment-core = { path = "../omega-commitment-core" }
 
-hex.workspace = true
 p3-air.workspace = true
 p3-baby-bear.workspace = true
 p3-batch-stark.workspace = true
@@ -30,14 +29,12 @@ p3-symmetric.workspace = true
 p3-uni-stark.workspace = true
 postcard.workspace = true
 rand.workspace = true
-serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
 omega-commitment-core = { path = "../omega-commitment-core" }
-omega-claim-verifier = { path = "../omega-claim-verifier" }
 
 [[bench]]
-name = "bench_prove_p50"
+name = "bench_verify_p50"
 harness = false

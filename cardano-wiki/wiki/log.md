@@ -389,9 +389,24 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 - Tests: `tests/prover_smoke.rs` builds a 256-leaf v1 UTxO tree, proves leaf 42, rejects a tampered sibling path, and rejects a 35-byte payload that creates a 65-byte v0.1 leaf preimage.
 - Verification before ticking tasks: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --no-fail-fast`, `openspec validate add-proof-experiment-harness --strict`, and `openspec validate add-goblin-agentic-framework --strict` all exited 0.
 
+## [2026-05-03] plan | proof-experiment harness batch 3 - omega-claim-verifier
+- Scope: OpenSpec `add-proof-experiment-harness` tasks 3.1-3.4. Task 3.5 stays open because `bench_verify_p50.rs` compiles but has not been measured or turned into a p50 assertion.
+- New crate: `omega-claim-verifier` with pure `verify(commitment, public_inputs, proof) -> Result<(), VerifyError>`. It uses no async, no I/O, and no global mutable state.
+- Binding fix: the prover now binds a Blake3 digest of `(commitment, public_inputs)` into the Plonky3 public values. The verifier recomputes those words before accepting the proof, so rewritten envelope inputs fail with `VerifyError::InvalidProof`.
+- Tests: `tests/verifier_roundtrip.rs` covers prove to verify success, tampered proof bytes, wrong commitment, public input mismatch, and rewritten envelope public inputs with matching call arguments.
+- Verification before ticking tasks: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --no-fail-fast`, `openspec validate add-proof-experiment-harness --strict`, and `openspec validate add-goblin-agentic-framework --strict` all exited 0.
+
 ## [2026-05-03] spec | LoganNet CLI experience v3.1 — proper lobster banner + goblin strip restored
 - Spec at docs/superpowers/specs/2026-05-03-loganet-cli-experience-design.md (v3.1)
 - v3 regression reverted: the heraldic-sigil banner was unrecognisable as a lobster; replaced with a 14-row × 60-col creature drawing with raised claws, framed Cardano + LGN emblems, eye stalks, segmented carapace, splayed tail fan
 - v3 dropped the goblin strip from the dashboard; v3.1 restored it: 5-row strip of all six role glyphs side-by-side, greyed out (loganet.muted) for roles with count=0 so the layout never shifts
 - Kept everything else from v3: three banner widths (compact/default/wide), four palette themes (default/highcontrast/monochrome/deuteranopia), single-slot sticky alarm row, sparkline-per-role at 16-bucket × 1s, two-phase drain on q with 5s budget + countdown footer, ^Z handling, LF-normalised snapshots, CI matrix on Linux+macOS+Windows
 - Crate name: omega-tui (single source of truth for banners/goblins/style/progress/dashboard/keybinds across all three binaries)
+
+## [2026-05-03] resolve | proof-experiment harness batch 3 - PR #2 soundness fix
+- Scope: close the PR #2 P0 where `OmegaMembershipAir` accepted arbitrary membership rows. The AIR now constrains leaf index bits, path direction, left/right child selection, path-step increments, terminal depth, and final `current_node == per_sub_tree_root`.
+- Blake3 gluing changed from a separate proof slot to a real batched STARK interaction: each membership row receives leaf or node compression tuples through LogUp, and the shared `OmegaBlake3Air` sends the matching tuples.
+- Wire change: `ClaimPublicInputs` gained `tree_depth` and `per_sub_tree_root`; claim CBOR and the proof envelope moved from v1 to v2. The verifier now returns `WrongSubTreeRoot` or `DepthMismatch` before proof verification when those public fields disagree with the commitment.
+- New regression: `omega-claim-prover/tests/soundness_negative.rs` builds a 256-leaf tree for leaf 42, mutates payload, sibling, current-node, and leaf-index trace columns, then requires verifier rejection for each malformed proof object.
+- Verification before ticking 2.4.1-2.4.8 and re-ticking 3.4: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --no-fail-fast`, `openspec validate add-proof-experiment-harness --strict`, and `openspec validate add-goblin-agentic-framework --strict` all exited 0. PR #2 CI passed at `96939e7`.
+- Still open: prover and verifier p50 benchmark tasks 2.8 and 3.5 need measured 100-sample runs before the SLA can be ticked.

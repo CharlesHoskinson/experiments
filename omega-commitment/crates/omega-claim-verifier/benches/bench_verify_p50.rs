@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use omega_claim_prover::{prove_collection, MembershipWitness, OmegaCommitment, ProverConfig};
-use omega_claim_tx::ClaimPublicInputs;
+use omega_claim_tx::{ClaimPublicInputs, ProofBytes};
+use omega_claim_verifier::verify;
 use omega_commitment_core::{
     hash::{blake3_256, Hash},
     tree::{leaf_hash_v2, MerkleTree},
@@ -44,45 +45,51 @@ fn commitment_for(
     }
 }
 
-fn witnesses(count: usize) -> (OmegaCommitment, Vec<MembershipWitness>) {
+fn proof_fixture(count: usize) -> (OmegaCommitment, Vec<ClaimPublicInputs>, ProofBytes) {
     let payloads = payloads(256);
     let tree = MerkleTree::build_v1(SUB_TREE_ID_UTXO, payloads.clone()).unwrap();
     let commitment = commitment_for(tree.root(), payloads.len(), tree.leaf_count(), tree.depth());
-    let witnesses = (0..count)
-        .map(|index| {
-            let payload = payloads[index].clone();
-            let inclusion = InclusionWitness::build_at_index(&tree, index as u32).unwrap();
-            assert_eq!(
-                inclusion.leaf,
-                leaf_hash_v2(SUB_TREE_ID_UTXO, index as u64, &payload)
-            );
-            let public = ClaimPublicInputs {
-                sub_tree_id: SUB_TREE_ID_UTXO,
-                leaf_index: index as u64,
-                tree_depth: tree.depth() as u8,
-                per_sub_tree_root: tree.root(),
-                bundle_root_blake3: commitment.bundle_root_blake3,
-                nullifier: hash(0xA1),
-                recipient_starstream_addr: hash(0xB2),
-            };
-            MembershipWitness::from_inclusion(public, payload, inclusion)
-        })
-        .collect();
-    (commitment, witnesses)
+    let mut public_inputs = Vec::with_capacity(count);
+    let mut witnesses = Vec::with_capacity(count);
+
+    for (index, payload) in payloads.iter().enumerate().take(count) {
+        let payload = payload.clone();
+        let inclusion = InclusionWitness::build_at_index(&tree, index as u32).unwrap();
+        assert_eq!(
+            inclusion.leaf,
+            leaf_hash_v2(SUB_TREE_ID_UTXO, index as u64, &payload)
+        );
+        let public = ClaimPublicInputs {
+            sub_tree_id: SUB_TREE_ID_UTXO,
+            leaf_index: index as u64,
+            tree_depth: tree.depth() as u8,
+            per_sub_tree_root: tree.root(),
+            bundle_root_blake3: commitment.bundle_root_blake3,
+            nullifier: hash(0xA1),
+            recipient_starstream_addr: hash(0xB2),
+        };
+        public_inputs.push(public.clone());
+        witnesses.push(MembershipWitness::from_inclusion(
+            public, payload, inclusion,
+        ));
+    }
+
+    let proof = prove_collection(&commitment, &witnesses, &ProverConfig::default()).unwrap();
+    (commitment, public_inputs, proof)
 }
 
-fn bench_prove(c: &mut Criterion) {
-    let mut group = c.benchmark_group("omega_claim_prover");
+fn bench_verify(c: &mut Criterion) {
+    let mut group = c.benchmark_group("omega_claim_verifier");
     for count in [1usize, 16, 256] {
-        let (commitment, witnesses) = witnesses(count);
-        group.bench_function(format!("prove_{count}_leaves"), |b| {
+        let (commitment, public_inputs, proof) = proof_fixture(count);
+        group.bench_function(format!("verify_{count}_leaves"), |b| {
             b.iter(|| {
-                prove_collection(
+                verify(
                     black_box(&commitment),
-                    black_box(&witnesses),
-                    black_box(&ProverConfig::default()),
+                    black_box(&public_inputs),
+                    black_box(&proof),
                 )
-                .expect("proof")
+                .expect("verify")
             });
         });
     }
@@ -92,6 +99,6 @@ fn bench_prove(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(100);
-    targets = bench_prove
+    targets = bench_verify
 }
 criterion_main!(benches);

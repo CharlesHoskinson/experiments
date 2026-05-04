@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use thiserror::Error;
 
-const WIRE_VERSION: u64 = 1;
+pub const CLAIM_TX_WIRE_VERSION: u64 = 2;
 const VARIANT_UTXO: u64 = 0;
 const VARIANT_COLLECTION: u64 = 1;
 const CHECKSUM_LEN: usize = 32;
@@ -41,6 +41,11 @@ pub struct ClaimPublicInputs {
     pub sub_tree_id: u8,
     /// Canonical leaf index in the sub-tree.
     pub leaf_index: u64,
+    /// Expected Merkle path depth for the selected sub-tree.
+    pub tree_depth: u8,
+    /// Per-sub-tree root pinned by the published Ω-Commitment.
+    #[serde(with = "hex::serde")]
+    pub per_sub_tree_root: Hash,
     /// Blake3 bundle root from the published Ω-Commitment.
     #[serde(with = "hex::serde")]
     pub bundle_root_blake3: Hash,
@@ -159,7 +164,7 @@ impl ClaimTx {
         let mut encoder = Encoder::new(Vec::new());
         encoder
             .array(3)?
-            .u64(WIRE_VERSION)?
+            .u64(CLAIM_TX_WIRE_VERSION)?
             .bytes(&payload)?
             .bytes(&checksum)?;
         Ok(encoder.into_writer())
@@ -175,7 +180,7 @@ impl ClaimTx {
         let mut decoder = Decoder::new(bytes);
         expect_array(&mut decoder, "envelope", 3)?;
         let version = decoder.u64()?;
-        if version != WIRE_VERSION {
+        if version != CLAIM_TX_WIRE_VERSION {
             return Err(CborError::UnsupportedVersion(version));
         }
         let payload = decoder.bytes()?.to_vec();
@@ -259,9 +264,11 @@ fn encode_public_inputs(
     encoder: &mut Encoder<Vec<u8>>,
 ) -> Result<(), CborEncodeError> {
     encoder
-        .array(5)?
+        .array(7)?
         .u8(public.sub_tree_id)?
         .u64(public.leaf_index)?
+        .u8(public.tree_depth)?
+        .bytes(&public.per_sub_tree_root)?
         .bytes(&public.bundle_root_blake3)?
         .bytes(&public.nullifier)?
         .bytes(&public.recipient_starstream_addr)?;
@@ -338,10 +345,12 @@ fn decode_collection(decoder: &mut Decoder<'_>) -> Result<ClaimCollection, CborE
 }
 
 fn decode_public_inputs(decoder: &mut Decoder<'_>) -> Result<ClaimPublicInputs, CborError> {
-    expect_array(decoder, "public_inputs", 5)?;
+    expect_array(decoder, "public_inputs", 7)?;
     Ok(ClaimPublicInputs {
         sub_tree_id: decoder.u8()?,
         leaf_index: decoder.u64()?,
+        tree_depth: decoder.u8()?,
+        per_sub_tree_root: read_hash(decoder, "per_sub_tree_root")?,
         bundle_root_blake3: read_hash(decoder, "bundle_root_blake3")?,
         nullifier: read_hash(decoder, "nullifier")?,
         recipient_starstream_addr: read_hash(decoder, "recipient_starstream_addr")?,
