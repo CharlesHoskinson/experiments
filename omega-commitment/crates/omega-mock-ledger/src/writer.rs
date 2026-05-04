@@ -398,6 +398,9 @@ fn insert_starstream_utxo(
 }
 
 fn payload_value(payload: &[u8]) -> u64 {
+    // v0.1 synthetic UTxO leaves encode the mock value in bytes 8..16. Short
+    // payloads are legal proof inputs, but they do not carry a value field, so
+    // the mock-ledger projection emits a zero-value Starstream row.
     if payload.len() < 16 {
         return 0;
     }
@@ -443,6 +446,11 @@ fn restore_snapshot(
         "starstream_utxos",
         "genesis",
     ] {
+        // Installing a snapshot replaces the local state image, including
+        // raft-log rows after the snapshot index. That is openraft install
+        // semantics: the leader will send any required post-snapshot entries
+        // after restore. v0.1 uses table-copy instead of drop-and-rename so
+        // Windows reader-pool handles can stay alive during the operation.
         tx.execute(&format!("DELETE FROM main.{table}"), [])?;
         tx.execute(
             &format!("INSERT INTO main.{table} SELECT * FROM snapshot_db.{table}"),
@@ -571,6 +579,9 @@ fn apply_raft_entries(
                 Err(error) => LedgerResponse::rejected(error.to_string()),
             },
         };
+        // A rejected command still advances the state-machine index. The log
+        // entry has been applied: the deterministic result is a rejection
+        // response rather than a state mutation.
         let last_applied = postcard::to_allocvec(&entry.log_id)
             .map_err(|error| LedgerError::Codec(error.to_string()))?;
         save_raft_meta(conn, "last_applied_log_id", Some(last_applied.as_slice()))?;

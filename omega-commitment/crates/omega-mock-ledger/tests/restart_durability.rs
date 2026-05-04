@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::path::PathBuf;
 
 use omega_claim_prover::{prove_collection, MembershipWitness, OmegaCommitment, ProverConfig};

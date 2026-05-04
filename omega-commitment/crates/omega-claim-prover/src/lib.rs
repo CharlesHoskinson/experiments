@@ -1,4 +1,3 @@
-#![forbid(unsafe_code)]
 //! Plonky3 STARK prover for Merkle-inclusion claims against a published
 //! Ω-Commitment.
 //!
@@ -63,6 +62,7 @@
 //! - Layout matches the upstream `prove_prime_field_31.rs` example with
 //!   `p3-batch-stark` for multi-AIR proofs.
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
 #![warn(rustdoc::missing_crate_level_docs)]

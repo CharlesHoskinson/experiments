@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::path::PathBuf;
 
 use omega_mock_ledger::{MockLedger, MockLedgerStorage, OmegaRaftTypeConfig};

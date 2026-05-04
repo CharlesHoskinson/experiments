@@ -24,27 +24,37 @@ use crate::writer::RaftLogRow;
 use crate::{sqlite_i64, MockLedger};
 
 openraft::declare_raft_types!(
+    #[doc = "Openraft type configuration for the mock-ledger state machine."]
     pub OmegaRaftTypeConfig:
         D = LedgerCommand,
         R = LedgerResponse,
 );
 
+/// Raft log entry type used by the mock-ledger storage adapter.
 pub type OmegaRaftEntry = openraft::Entry<OmegaRaftTypeConfig>;
 
+/// Command replicated through openraft before entering the ledger apply path.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerCommand {
+    /// Mock block index associated with the claim application.
     pub block_idx: u64,
+    /// Published commitment that the proof is verified against.
     pub commitment: OmegaCommitment,
+    /// Typed claim envelope to verify and apply.
     pub claim: ClaimTx,
 }
 
+/// Response returned after a replicated ledger command is applied.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerResponse {
+    /// Whether the command mutated ledger state.
     pub accepted: bool,
+    /// Rejection text when `accepted` is false.
     pub error: Option<String>,
 }
 
 impl LedgerResponse {
+    /// Builds a successful apply response.
     pub fn accepted() -> Self {
         Self {
             accepted: true,
@@ -52,6 +62,7 @@ impl LedgerResponse {
         }
     }
 
+    /// Builds a rejected apply response with a displayable reason.
     pub fn rejected(error: String) -> Self {
         Self {
             accepted: false,
@@ -61,15 +72,22 @@ impl LedgerResponse {
 }
 
 #[derive(Clone)]
+/// Openraft storage facade backed by [`MockLedger`].
 pub struct MockLedgerStorage {
     ledger: MockLedger,
 }
 
 impl MockLedgerStorage {
+    /// Wraps an opened ledger for use as openraft storage.
     pub fn new(ledger: MockLedger) -> Self {
         Self { ledger }
     }
 
+    /// Splits this storage into openraft's log-store and state-machine parts.
+    ///
+    /// openraft 0.9 exposes split storage traits through
+    /// [`openraft::storage::Adaptor`]. Both returned adaptors share the same
+    /// underlying writer actor and reader pool.
     pub fn openraft_parts(
         self,
     ) -> (
@@ -283,6 +301,10 @@ impl RaftStorage<OmegaRaftTypeConfig> for MockLedgerStorage {
         let mut last_membership = None;
         for entry in entries {
             if let EntryPayload::Membership(membership) = &entry.payload {
+                // The latest membership in the batch is persisted after the
+                // batch applies. A later normal entry may reject without
+                // invalidating this membership transition; openraft treats both
+                // values as monotonic state-machine metadata.
                 let stored = StoredMembership::new(Some(entry.log_id), membership.clone());
                 last_membership = Some(encode(&stored)?);
             }

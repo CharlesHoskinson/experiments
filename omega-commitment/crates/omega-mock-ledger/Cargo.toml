@@ -30,3 +30,6 @@ tokio.workspace = true
 
 [dev-dependencies]
 omega-claim-prover = { path = "../omega-claim-prover" }
+
+[lints]
+workspace = true
