@@ -18,8 +18,8 @@ pub enum ConsensusError {
     RpcBind {
         /// The address that failed to bind.
         addr: std::net::SocketAddr,
-        /// Underlying jsonrpsee error.
-        source: jsonrpsee::core::client::Error,
+        /// Underlying TCP bind error.
+        source: std::io::Error,
     },
 
     /// openraft initialisation, run-loop, or shutdown failed.
