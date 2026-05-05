@@ -33,6 +33,9 @@
 ### Testnet Demo (T1 + T6 prototype)
 - [[omega-testnet-e2e-plan]] — End-to-end preview-testnet flow: snapshot → ingest → claim_utxo → prototype Omega node + Plonky3 verifier; what to fork, what to depend on _(2026-05-03)_
 
+### LoganNet (local 3-node consensus harness)
+- [[loganet-roadmap]] — Component status, omega-toy-consensus Group 1 scope, Group 2 deferrals, cross-component deferrals to omega-tui / omega-api / omega-goblins _(2026-05-05)_
+
 ### Repositories
 - [[cardano-repos]] — Key code across IntersectMBO, IOG, Foundation, scaling
 

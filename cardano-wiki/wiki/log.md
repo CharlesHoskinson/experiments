@@ -4,6 +4,10 @@ Append-only. Format: `## [YYYY-MM-DD] <operation> | <title>`
 
 ---
 
+## [2026-05-05] update | loganet-roadmap (new page)
+Reason: Track the LoganNet milestone explicitly so the omega-toy-consensus Group 1 deferrals (membership change, mdns/kademlia, omega_clusterStatus, Linux/macOS CI matrix) and cross-component deferrals (omega-tui, omega-api, omega-goblin-core/runner, WebSocket subscriptions, TLS/auth, six Goblin roles, LLM planning loop) are auditable from one place. Updated `wiki/index.md` and `.search-index.md`.
+Source: docs/superpowers/specs/2026-05-05-omega-toy-consensus-design.md (this session's spec, commit d8f2a37 on docs/omega-toy-consensus-spec); cardano-wiki/docs/superpowers/specs/2026-05-03-loganet-cli-experience-design.md; cardano-wiki/docs/superpowers/specs/2026-05-03-loganet-goblins-readme-expansion-design.md; openspec/changes/add-goblin-agentic-framework/proposal.md; openspec/changes/add-proof-experiment-harness/.
+
 ## [2026-05-03] spec | Omega archive-anchored-claims design — full architectural spec draft
 - Saved at docs/superpowers/specs/2026-05-03-omega-archive-anchored-claims-design.md (306 lines)
 - Synthesises 19 brainstorm + research + pressure-test agents (C1-C6 capability scan, P1-P5 privacy primitive lenses, A1-A6 adversarial attack classes, G1 governance trajectory) into one architectural spec
