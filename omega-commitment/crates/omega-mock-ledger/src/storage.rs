@@ -8,8 +8,9 @@ use std::io::Cursor;
 use std::ops::{Bound, RangeBounds};
 use std::path::PathBuf;
 
-use omega_claim_prover::OmegaCommitment;
-use omega_claim_tx::ClaimTx;
+use omega_claim_prover::{OmegaCommitment, ProofEnvelope};
+use omega_claim_tx::{ClaimTx, ProofBytes};
+use omega_claim_verifier::VerifyError;
 use openraft::storage::Adaptor;
 use openraft::{
     EntryPayload, ErrorSubject, ErrorVerb, LogId, LogState, RaftLogReader, RaftSnapshotBuilder,
@@ -44,13 +45,59 @@ pub struct LedgerCommand {
     pub claim: ClaimTx,
 }
 
+impl LedgerCommand {
+    /// Builds a replicated apply command from a submitted claim transaction.
+    ///
+    /// The JSON-RPC Group 1 surface accepts `ClaimTx` directly. The proof
+    /// envelope inside the claim carries the published commitment, so this
+    /// constructor extracts that commitment before the command enters raft.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::LedgerError::Verify`] when the claim's proof bytes do
+    /// not decode as a proof envelope.
+    pub fn apply_claim(claim: ClaimTx) -> Result<Self, crate::LedgerError> {
+        let envelope: ProofEnvelope = postcard::from_bytes(&claim_proof(&claim).0)
+            .map_err(|_| crate::LedgerError::Verify(VerifyError::InvalidProof))?;
+        Ok(Self {
+            block_idx: 0,
+            commitment: envelope.commitment,
+            claim,
+        })
+    }
+}
+
+fn claim_proof(claim: &ClaimTx) -> &ProofBytes {
+    match claim {
+        ClaimTx::Utxo(claim) => &claim.proof,
+        ClaimTx::Collection(claim) => &claim.proof,
+    }
+}
+
 /// Response returned after a replicated ledger command is applied.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerResponse {
     /// Whether the command mutated ledger state.
     pub accepted: bool,
+    /// Structured rejection class when `accepted` is false.
+    pub reject: Option<LedgerReject>,
     /// Rejection text when `accepted` is false.
     pub error: Option<String>,
+}
+
+/// Serializable rejection class returned through raft apply responses.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum LedgerReject {
+    /// The proof verifier rejected the claim.
+    Verify,
+    /// The claim envelope was internally inconsistent.
+    InvalidClaim,
+    /// The claim reused an already-applied nullifier.
+    Replay,
+    /// The writer actor closed while applying the command.
+    WriterClosed,
+    /// Any other ledger-side failure.
+    Internal,
 }
 
 impl LedgerResponse {
@@ -58,15 +105,26 @@ impl LedgerResponse {
     pub fn accepted() -> Self {
         Self {
             accepted: true,
+            reject: None,
             error: None,
         }
     }
 
     /// Builds a rejected apply response with a displayable reason.
-    pub fn rejected(error: String) -> Self {
+    pub fn rejected(error: crate::LedgerError) -> Self {
+        let reject = match &error {
+            crate::LedgerError::Verify(_) => LedgerReject::Verify,
+            crate::LedgerError::InvalidClaim(_) => LedgerReject::InvalidClaim,
+            crate::LedgerError::Replay { .. } => LedgerReject::Replay,
+            crate::LedgerError::WriterClosed | crate::LedgerError::WriterReplyCanceled => {
+                LedgerReject::WriterClosed
+            }
+            _ => LedgerReject::Internal,
+        };
         Self {
             accepted: false,
-            error: Some(error),
+            reject: Some(reject),
+            error: Some(error.to_string()),
         }
     }
 }

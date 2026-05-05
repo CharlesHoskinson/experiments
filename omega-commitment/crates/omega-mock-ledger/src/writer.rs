@@ -602,7 +602,7 @@ fn apply_raft_entries(
                 command.claim.clone(),
             ) {
                 Ok(()) => LedgerResponse::accepted(),
-                Err(error) => LedgerResponse::rejected(error.to_string()),
+                Err(error) => LedgerResponse::rejected(error),
             },
         };
         // A rejected command still advances the state-machine index. The log
