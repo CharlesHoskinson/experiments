@@ -35,7 +35,9 @@ pub fn three_node_configs() -> [NodeConfig; 3] {
 /// Boots a 3-node turmoil sim.
 pub fn three_node_sim() -> turmoil::Sim<'static> {
     let configs = three_node_configs();
-    let mut sim = turmoil::Builder::new()
+    let mut builder = turmoil::Builder::new();
+    let mut sim = builder
+        .enable_tokio_io()
         .simulation_duration(Duration::from_secs(60))
         .build();
     for cfg in configs {
