@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+failpoints = []
+
 [dependencies]
 omega-mock-ledger = { path = "../omega-mock-ledger" }
 

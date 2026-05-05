@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 default = []
 cardano-tx-validation = ["dep:pallas-validate"]
+failpoints = []
 
 [dependencies]
 omega-claim-tx = { path = "../omega-claim-tx" }
