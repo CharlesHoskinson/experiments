@@ -1,3 +1,29 @@
+//! Writer-actor for the SQLite-backed mock ledger.
+//!
+//! A single dedicated OS thread (`std::thread::spawn`, **not** a tokio task)
+//! owns the rusqlite write [`Connection`] for the ledger's primary database.
+//! Async callers send a [`WriteCmd`] over a Tokio mpsc channel and await the
+//! reply on a oneshot. This pattern is required (not just preferred) because
+//! openraft's `RaftStateMachine` apply path expects the future it polls to
+//! make progress under back-pressure: per-call `tokio::task::spawn_blocking`
+//! would not pipeline writes and would produce a thundering herd against
+//! SQLite's single-writer WAL serialisation under load. The actor pattern
+//! eliminates that herd by serialising every mutating command through one
+//! channel.
+//!
+//! The same channel carries snapshot, restore, and WAL-checkpoint commands.
+//! The implicit channel ordering is the only synchronisation between writes
+//! and snapshots; no separate mutex is needed.
+//!
+//! # Soundness
+//!
+//! Mutating commands route exclusively through this actor; readers borrow
+//! short-lived `r2d2_sqlite::Connection`s from a pool sized to
+//! `num_cpus::get()`. The single-writer property guarantees that the
+//! verify-before-mutate invariant in [`crate::MockLedger::apply_claim`] holds
+//! across all callers — there is no second path that could insert a
+//! nullifier without first calling [`omega_claim_verifier::verify`].
+
 use std::path::PathBuf;
 use std::thread;
 

@@ -1,5 +1,33 @@
 //! SQLite schema and PRAGMA setup for `omega-mock-ledger`.
 //!
+//! Five tables, all declared `WITHOUT ROWID` with composite primary keys
+//! where applicable so SQLite skips the implicit rowid B-tree:
+//!
+//! - `raft_log` — openraft log entries keyed by `log_idx`.
+//! - `raft_meta` — Raft hard state (vote, last-purged log id, term) keyed by
+//!   a string `k` slot.
+//! - `nullifiers` — accepted claims, PK `(sub_tree_id, leaf_index)`.
+//! - `starstream_utxos` — UTxOs emitted by accepted claims, PK by content
+//!   hash.
+//! - `genesis` — pinned genesis-time parameters keyed by a string `k` slot.
+//!
+//! Foreign keys are intentionally absent: the state machine enforces every
+//! cross-table invariant in Rust and the FK overhead is wasted B-tree work
+//! per insert.
+//!
+//! PRAGMAs set on every connection (via the private `apply_pragmas` helper
+//! in this module):
+//!
+//! | PRAGMA | Value | Reason |
+//! |---|---|---|
+//! | `journal_mode` | `WAL` | single-writer + many-reader; no rollback-journal fsync |
+//! | `synchronous` | `NORMAL` | crash-safe with WAL, faster than `FULL` |
+//! | `cache_size` | `-65536` | 64 MiB page cache for hot nullifier lookups |
+//! | `mmap_size` | `268435456` (Linux/macOS only) | 256 MiB mmap on read paths; disabled on Windows due to file-locking interactions |
+//! | `temp_store` | `MEMORY` | temp B-tree builds stay in RAM |
+//! | `wal_autocheckpoint` | `10000` | cap WAL growth; periodic explicit `wal_checkpoint(TRUNCATE)` runs alongside |
+//! | `auto_vacuum` | `NONE` | snapshots truncate via `VACUUM INTO`; auto-vacuum overhead is wasted |
+//!
 //! The schema module is public because integration tests and future harness
 //! crates need to inspect the exact PRAGMA state. State mutation still flows
 //! through [`crate::MockLedger`]'s writer actor.

@@ -194,6 +194,14 @@ impl RaftStorage<OmegaRaftTypeConfig> for MockLedgerStorage {
         self.read_meta("vote").await
     }
 
+    /// Persist the latest committed `LogId` to the `raft_meta` table.
+    ///
+    /// # Soundness
+    ///
+    /// Writes the committed cursor through the writer actor so it shares the
+    /// same FIFO ordering as state-machine applies. openraft expects this to
+    /// be durable before crashes; the WAL fsync at COMMIT inside the writer
+    /// thread provides that durability.
     async fn save_committed(
         &mut self,
         committed: Option<LogId<u64>>,
@@ -294,6 +302,20 @@ impl RaftStorage<OmegaRaftTypeConfig> for MockLedgerStorage {
         Ok((last_applied, membership))
     }
 
+    /// Apply a batch of committed Raft entries to the state machine.
+    ///
+    /// # Soundness
+    ///
+    /// Routes the entries through the writer actor (`writer::apply_raft_entries`),
+    /// which calls [`omega_claim_verifier::verify`] on every claim payload before
+    /// any state mutation, then opens a SQLite transaction that performs the
+    /// nullifier-replay probe and the nullifier + Starstream UTxO inserts as a
+    /// single unit. A malformed entry returns an `Err(LedgerResponse::…)`
+    /// alongside the openraft `applied_log_id` advance so consensus does not
+    /// stall behind a rejected entry, but the *state* of the rejected entry is
+    /// never written. Membership entries in the batch are extracted into the
+    /// optional `last_membership` blob and persisted at the end of the batch as
+    /// monotonic state-machine metadata.
     async fn apply_to_state_machine(
         &mut self,
         entries: &[OmegaRaftEntry],
@@ -326,6 +348,18 @@ impl RaftStorage<OmegaRaftTypeConfig> for MockLedgerStorage {
         Ok(Box::new(Cursor::new(Vec::new())))
     }
 
+    /// Install a snapshot received from a leader, replacing the live state.
+    ///
+    /// # Soundness
+    ///
+    /// The snapshot bytes are written to disk under
+    /// `installed_snapshot_path(...)` and then handed to the writer actor's
+    /// `restore_snapshot` path, which serialises against ordinary writes via
+    /// the same mpsc channel — there is no window where a reader can observe a
+    /// half-replaced state because the live DB swap is fenced by the channel's
+    /// FIFO order. The `meta` blob is persisted last so a crash mid-install
+    /// surfaces as "no installed snapshot" rather than "snapshot meta points
+    /// at half-written state".
     async fn install_snapshot(
         &mut self,
         meta: &SnapshotMeta<u64, openraft::BasicNode>,

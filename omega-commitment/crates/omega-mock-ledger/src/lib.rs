@@ -242,9 +242,15 @@ impl MockLedger {
     /// actor parses the typed claim, calls [`omega_claim_verifier::verify`]
     /// before opening the SQLite transaction, checks every nullifier inside
     /// that transaction, then inserts the nullifier and Starstream UTxO rows as
-    /// one unit. The function prevents forged proofs and replayed leaves from
+    /// one unit. The verifier consumes the v2 [`ClaimPublicInputs`] shape — the
+    /// `tree_depth` and `per_sub_tree_root` fields bind every accepted claim to
+    /// a specific sub-tree at a specific depth, so a forged proof against a
+    /// stale or wrong root is rejected at the verifier layer before any state
+    /// mutation. The function prevents forged proofs and replayed leaves from
     /// mutating state. It does not establish consensus ordering; openraft owns
     /// that layer.
+    ///
+    /// [`ClaimPublicInputs`]: omega_claim_tx::ClaimPublicInputs
     ///
     /// # Limitations
     ///
