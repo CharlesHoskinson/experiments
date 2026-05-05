@@ -11,11 +11,13 @@ if [[ -z "$CRATE" ]]; then
 fi
 
 # Pinned bounds:
-#   --default-unwind 4    — small loops (7 sub-trees, 8 constraints)
-#   --solver minisat      — stable baseline; cadical is faster but flakier
-#   --output-format old   — machine-readable output for orchestrator parsing
+#   --default-unwind 4        — small loops (7 sub-trees, 8 constraints)
+#   --solver minisat          — stable baseline; cadical is faster but flakier
+#   --output-format regular   — `regular` (cargo-kani >= 0.50) replaces the
+#                                deprecated `old` format; orchestrator parses
+#                                the "VERIFICATION:- SUCCESSFUL/FAILED" line.
 cargo kani \
     -p "$CRATE" \
     --default-unwind 4 \
     --solver minisat \
-    --output-format old
+    --output-format regular

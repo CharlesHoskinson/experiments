@@ -55,9 +55,9 @@ Each invoked skill writes its tests and returns one line: `<framework>: wrote N 
 
 For each invoked skill, run the appropriate command:
 
-- proptest, kani: `cargo nextest run -p <crate> <test_name>`
+- proptest: `cargo nextest run -p <crate> <test_name>`
+- kani: `bash skills/local/rust-test-kani/scripts/kani-bound.sh <crate>` (canonical; uses pinned bounds)
 - cargo-fuzz: `bash skills/local/rust-test-cargo-fuzz/scripts/run-fuzz.sh <target> <duration>`
-- kani: `bash skills/local/rust-test-kani/scripts/kani-bound.sh <crate>`
 - shuttle-loom (Shuttle): `cargo test -p <crate> --features shuttle`
 - shuttle-loom (Loom): `LOOM_MAX_PREEMPTIONS=3 cargo test -p <crate> --release`
 - failpoints: `cargo test -p <crate> --features failpoints`

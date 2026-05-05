@@ -20,9 +20,19 @@ fn three_node_loganet() -> turmoil::Sim<'static> {
 }
 ```
 
-## Test: single leader emerges
+## Test: single leader emerges (pseudocode)
+
+The snippets below are **pseudocode** — `sim.host(n)` returns a turmoil
+`&Host`, not the user's actor, so domain methods like `.is_leader()` and
+`.submit_claim()` cannot be invoked directly through it. Real tests query
+node state through a side channel: either a JSON-RPC HTTP client (the
+shape `omega-toy-consensus` Group 1 uses) or an `Arc<Mutex<...>>` shared
+across host closures. See
+`crates/omega-toy-consensus/tests/single_leader_emerges.rs` (when
+present) for the canonical pattern.
 
 ```rust
+// PSEUDOCODE — adapt to your project's RPC client / shared-state seam.
 #[turmoil::test]
 async fn single_leader_emerges() {
     let mut sim = three_node_loganet();
@@ -30,16 +40,18 @@ async fn single_leader_emerges() {
 
     let leaders: Vec<_> = ["node1", "node2", "node3"]
         .iter()
-        .filter(|n| sim.host(n).is_leader())
+        .filter(|n| query_role_via_rpc(n) == Role::Leader)
         .collect();
 
     assert_eq!(leaders.len(), 1, "exactly one leader");
 }
 ```
 
-## Test: partition tolerance
+## Test: partition tolerance (pseudocode)
 
 ```rust
+// PSEUDOCODE — `submit_claim` is the project's JSON-RPC client call,
+// not a method on turmoil's &Host.
 #[turmoil::test]
 async fn partitioned_minority_does_not_commit() {
     let mut sim = three_node_loganet();
@@ -50,9 +62,9 @@ async fn partitioned_minority_does_not_commit() {
     sim.partition("node1", "node3");
 
     // Node 1, now in a 1-node minority, must not commit.
-    let result = sim.host("node1").submit_claim(dummy_claim());
+    let result = submit_claim_via_rpc("http://node1:8001", dummy_claim()).await;
     sim.elapse(Duration::from_secs(5));
-    assert!(result.await.is_err(), "minority partition must not commit");
+    assert!(result.is_err(), "minority partition must not commit");
 }
 ```
 
