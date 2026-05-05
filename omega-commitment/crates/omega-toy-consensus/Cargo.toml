@@ -1,0 +1,52 @@
+[package]
+name = "omega-toy-consensus"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+name = "omega_toy_consensus"
+path = "src/lib.rs"
+
+[[bin]]
+name = "omega-toy-consensus"
+path = "src/bin/omega-toy-consensus.rs"
+
+[dependencies]
+omega-claim-tx = { path = "../omega-claim-tx" }
+omega-mock-ledger = { path = "../omega-mock-ledger" }
+omega-network = { path = "../omega-network" }
+openraft = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+jsonrpsee = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+turmoil = { workspace = true }
+fail = { workspace = true }
+shuttle = { workspace = true }
+proptest = { workspace = true }
+tokio-test = "0.4"
+tempfile = { workspace = true }
+criterion = "0.5"
+
+[features]
+default = []
+failpoints = ["fail/failpoints", "omega-mock-ledger/failpoints", "omega-network/failpoints"]
+turmoil-tests = []
+shuttle-tests = []
+
+[[bench]]
+name = "bench_submit_p50"
+harness = false

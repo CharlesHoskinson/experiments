@@ -1,0 +1,1 @@
+//! Node configuration types.

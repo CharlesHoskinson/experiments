@@ -1,0 +1,1 @@
+//! Consensus error type.
