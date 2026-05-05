@@ -38,7 +38,7 @@ A one-line summary, then optional but contractually-conventional sections.
 /// # Examples
 ///
 /// ```
-/// use omega_commitment_core::hash::leaf_hash_v2;
+/// use omega_commitment_core::tree::leaf_hash_v2;
 /// let h = leaf_hash_v2(1, 0, b"alice");
 /// assert_eq!(h.len(), 32);
 /// ```
@@ -106,8 +106,16 @@ Example, the actual `verify` function in `omega-claim-verifier`:
 /// # Errors
 ///
 /// Returns:
+/// - `VerifyError::UnsupportedVersion` when the envelope version is not
+///   `PROOF_ENVELOPE_VERSION`.
 /// - `VerifyError::CommitmentMismatch` when the proof's bound commitment digest
 ///   does not equal `commitment`.
+/// - `VerifyError::PublicInputMismatch` when the envelope public inputs do not
+///   equal the caller-supplied public-input slice.
+/// - `VerifyError::UnknownSubTree` when a public input names a sub-tree absent
+///   from the commitment.
+/// - `VerifyError::PublicBundleRootMismatch` when the public bundle root does
+///   not match the commitment's Blake3 bundle root.
 /// - `VerifyError::WrongSubTreeRoot` when the public input `per_sub_tree_root`
 ///   does not equal the commitment's per-sub-tree root for the claimed
 ///   `sub_tree_id`.
@@ -154,7 +162,7 @@ Example, the actual `verify` function in `omega-claim-verifier`:
 /// adversarial input.
 pub fn verify(
     commitment: &OmegaCommitment,
-    public_inputs: &ClaimPublicInputs,
+    public_inputs: &[ClaimPublicInputs],
     proof: &ProofBytes,
 ) -> Result<(), VerifyError> {
     // ...
@@ -186,7 +194,7 @@ Every crate's `src/lib.rs` opens with a module docstring giving:
 1. **One-paragraph elevator pitch** — what the crate does, in plain English. Two or three sentences max.
 2. **Pointers to design context** — link to the OpenSpec change that authorised the crate, link to the design spec under `cardano-wiki/docs/superpowers/specs/`, and link to the relevant section of `cardano-wiki/wiki/log.md` if the crate has a non-trivial change history.
 3. **v0.1 limitations** — the explicit boundaries this crate honours and the v0.2 follow-ups.
-4. **Tier of trust** — is this a soundness-bearing crate, a state-handling crate, or a glue crate? Soundness-bearing crates (`omega-commitment-core`, `omega-claim-prover`, `omega-claim-verifier`) carry a stronger doc bar than glue crates (`omega-experiment` CLI).
+4. **Tier of trust** — is this a soundness-bearing crate, a state-handling crate, or a glue crate? The canonical list lives in `openspec/changes/add-proof-experiment-harness/tasks.md` task 12.7 and grows with the harness; soundness-bearing crates carry a stronger doc bar than glue crates (`omega-experiment` CLI).
 5. **Conventions specific to this crate** — anything an outside reader would need to know that is not standard Rust idiom.
 
 Example, `omega-claim-verifier/src/lib.rs`:

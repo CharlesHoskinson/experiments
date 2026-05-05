@@ -1,3 +1,29 @@
+//! Writer-actor for the SQLite-backed mock ledger.
+//!
+//! A single dedicated OS thread (`std::thread::spawn`, **not** a tokio task)
+//! owns the rusqlite write [`Connection`] for the ledger's primary database.
+//! Async callers send a [`WriteCmd`] over a Tokio mpsc channel and await the
+//! reply on a oneshot. This pattern is required (not just preferred) because
+//! openraft's `RaftStateMachine` apply path expects the future it polls to
+//! make progress under back-pressure: per-call `tokio::task::spawn_blocking`
+//! would not pipeline writes and would produce a thundering herd against
+//! SQLite's single-writer WAL serialisation under load. The actor pattern
+//! eliminates that herd by serialising every mutating command through one
+//! channel.
+//!
+//! The same channel carries snapshot, restore, and WAL-checkpoint commands.
+//! The implicit channel ordering is the only synchronisation between writes
+//! and snapshots; no separate mutex is needed.
+//!
+//! # Soundness
+//!
+//! Mutating commands route exclusively through this actor; readers borrow
+//! short-lived `r2d2_sqlite::Connection`s from a pool sized to
+//! `num_cpus::get()`. The single-writer property guarantees that the
+//! verify-before-mutate invariant in [`crate::MockLedger::apply_claim`] holds
+//! across all callers — there is no second path that could insert a
+//! nullifier without first calling [`omega_claim_verifier::verify`].
+
 use std::path::PathBuf;
 use std::thread;
 
@@ -398,6 +424,9 @@ fn insert_starstream_utxo(
 }
 
 fn payload_value(payload: &[u8]) -> u64 {
+    // v0.1 synthetic UTxO leaves encode the mock value in bytes 8..16. Short
+    // payloads are legal proof inputs, but they do not carry a value field, so
+    // the mock-ledger projection emits a zero-value Starstream row.
     if payload.len() < 16 {
         return 0;
     }
@@ -443,6 +472,11 @@ fn restore_snapshot(
         "starstream_utxos",
         "genesis",
     ] {
+        // Installing a snapshot replaces the local state image, including
+        // raft-log rows after the snapshot index. That is openraft install
+        // semantics: the leader will send any required post-snapshot entries
+        // after restore. v0.1 uses table-copy instead of drop-and-rename so
+        // Windows reader-pool handles can stay alive during the operation.
         tx.execute(&format!("DELETE FROM main.{table}"), [])?;
         tx.execute(
             &format!("INSERT INTO main.{table} SELECT * FROM snapshot_db.{table}"),
@@ -571,6 +605,9 @@ fn apply_raft_entries(
                 Err(error) => LedgerResponse::rejected(error.to_string()),
             },
         };
+        // A rejected command still advances the state-machine index. The log
+        // entry has been applied: the deterministic result is a rejection
+        // response rather than a state mutation.
         let last_applied = postcard::to_allocvec(&entry.log_id)
             .map_err(|error| LedgerError::Codec(error.to_string()))?;
         save_raft_meta(conn, "last_applied_log_id", Some(last_applied.as_slice()))?;

@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::path::PathBuf;
 
 use omega_mock_ledger::MockLedger;
@@ -21,6 +23,8 @@ fn schema_initializes_wal_pragmas_and_required_tables() {
     assert_eq!(pragmas.journal_mode, "wal");
     assert_eq!(pragmas.synchronous, 1);
     assert_eq!(pragmas.cache_size, -65_536);
+    #[cfg(not(windows))]
+    assert_eq!(pragmas.mmap_size, 268_435_456);
     assert_eq!(pragmas.temp_store, 2);
     assert_eq!(pragmas.wal_autocheckpoint, 10_000);
     assert_eq!(pragmas.auto_vacuum, 0);

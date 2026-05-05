@@ -24,27 +24,37 @@ use crate::writer::RaftLogRow;
 use crate::{sqlite_i64, MockLedger};
 
 openraft::declare_raft_types!(
+    #[doc = "Openraft type configuration for the mock-ledger state machine."]
     pub OmegaRaftTypeConfig:
         D = LedgerCommand,
         R = LedgerResponse,
 );
 
+/// Raft log entry type used by the mock-ledger storage adapter.
 pub type OmegaRaftEntry = openraft::Entry<OmegaRaftTypeConfig>;
 
+/// Command replicated through openraft before entering the ledger apply path.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerCommand {
+    /// Mock block index associated with the claim application.
     pub block_idx: u64,
+    /// Published commitment that the proof is verified against.
     pub commitment: OmegaCommitment,
+    /// Typed claim envelope to verify and apply.
     pub claim: ClaimTx,
 }
 
+/// Response returned after a replicated ledger command is applied.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerResponse {
+    /// Whether the command mutated ledger state.
     pub accepted: bool,
+    /// Rejection text when `accepted` is false.
     pub error: Option<String>,
 }
 
 impl LedgerResponse {
+    /// Builds a successful apply response.
     pub fn accepted() -> Self {
         Self {
             accepted: true,
@@ -52,6 +62,7 @@ impl LedgerResponse {
         }
     }
 
+    /// Builds a rejected apply response with a displayable reason.
     pub fn rejected(error: String) -> Self {
         Self {
             accepted: false,
@@ -61,15 +72,22 @@ impl LedgerResponse {
 }
 
 #[derive(Clone)]
+/// Openraft storage facade backed by [`MockLedger`].
 pub struct MockLedgerStorage {
     ledger: MockLedger,
 }
 
 impl MockLedgerStorage {
+    /// Wraps an opened ledger for use as openraft storage.
     pub fn new(ledger: MockLedger) -> Self {
         Self { ledger }
     }
 
+    /// Splits this storage into openraft's log-store and state-machine parts.
+    ///
+    /// openraft 0.9 exposes split storage traits through
+    /// [`openraft::storage::Adaptor`]. Both returned adaptors share the same
+    /// underlying writer actor and reader pool.
     pub fn openraft_parts(
         self,
     ) -> (
@@ -176,6 +194,14 @@ impl RaftStorage<OmegaRaftTypeConfig> for MockLedgerStorage {
         self.read_meta("vote").await
     }
 
+    /// Persist the latest committed `LogId` to the `raft_meta` table.
+    ///
+    /// # Soundness
+    ///
+    /// Writes the committed cursor through the writer actor so it shares the
+    /// same FIFO ordering as state-machine applies. openraft expects this to
+    /// be durable before crashes; the WAL fsync at COMMIT inside the writer
+    /// thread provides that durability.
     async fn save_committed(
         &mut self,
         committed: Option<LogId<u64>>,
@@ -276,6 +302,20 @@ impl RaftStorage<OmegaRaftTypeConfig> for MockLedgerStorage {
         Ok((last_applied, membership))
     }
 
+    /// Apply a batch of committed Raft entries to the state machine.
+    ///
+    /// # Soundness
+    ///
+    /// Routes the entries through the writer actor (`writer::apply_raft_entries`),
+    /// which calls [`omega_claim_verifier::verify`] on every claim payload before
+    /// any state mutation, then opens a SQLite transaction that performs the
+    /// nullifier-replay probe and the nullifier + Starstream UTxO inserts as a
+    /// single unit. A malformed entry returns an `Err(LedgerResponse::…)`
+    /// alongside the openraft `applied_log_id` advance so consensus does not
+    /// stall behind a rejected entry, but the *state* of the rejected entry is
+    /// never written. Membership entries in the batch are extracted into the
+    /// optional `last_membership` blob and persisted at the end of the batch as
+    /// monotonic state-machine metadata.
     async fn apply_to_state_machine(
         &mut self,
         entries: &[OmegaRaftEntry],
@@ -283,6 +323,10 @@ impl RaftStorage<OmegaRaftTypeConfig> for MockLedgerStorage {
         let mut last_membership = None;
         for entry in entries {
             if let EntryPayload::Membership(membership) = &entry.payload {
+                // The latest membership in the batch is persisted after the
+                // batch applies. A later normal entry may reject without
+                // invalidating this membership transition; openraft treats both
+                // values as monotonic state-machine metadata.
                 let stored = StoredMembership::new(Some(entry.log_id), membership.clone());
                 last_membership = Some(encode(&stored)?);
             }
@@ -304,6 +348,18 @@ impl RaftStorage<OmegaRaftTypeConfig> for MockLedgerStorage {
         Ok(Box::new(Cursor::new(Vec::new())))
     }
 
+    /// Install a snapshot received from a leader, replacing the live state.
+    ///
+    /// # Soundness
+    ///
+    /// The snapshot bytes are written to disk under
+    /// `installed_snapshot_path(...)` and then handed to the writer actor's
+    /// `restore_snapshot` path, which serialises against ordinary writes via
+    /// the same mpsc channel — there is no window where a reader can observe a
+    /// half-replaced state because the live DB swap is fenced by the channel's
+    /// FIFO order. The `meta` blob is persisted last so a crash mid-install
+    /// surfaces as "no installed snapshot" rather than "snapshot meta points
+    /// at half-written state".
     async fn install_snapshot(
         &mut self,
         meta: &SnapshotMeta<u64, openraft::BasicNode>,
