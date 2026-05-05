@@ -23,6 +23,7 @@ omega-network = { path = "../omega-network" }
 openraft = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 jsonrpsee = { workspace = true }
+humantime-serde = "1"
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -40,6 +41,7 @@ proptest = { workspace = true }
 tokio-test = "0.4"
 tempfile = { workspace = true }
 criterion = "0.5"
+toml = "0.8"
 
 [features]
 default = []
