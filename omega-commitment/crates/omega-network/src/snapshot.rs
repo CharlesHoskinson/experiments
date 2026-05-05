@@ -211,6 +211,30 @@ impl SnapshotFileReceiver {
     }
 
     /// Receives, validates, and durably acknowledges one snapshot frame.
+    ///
+    /// # Errors
+    ///
+    /// - [`SnapshotReceiveError::Protocol`] — the frame violated wire-protocol
+    ///   invariants (out-of-order chunk, mismatched snapshot id, oversized
+    ///   payload, byte-count overflow, hash mismatch). See the variants of
+    ///   [`SnapshotProtocolError`] for the full list.
+    /// - [`SnapshotReceiveError::Io`] — staging directory creation, write,
+    ///   fsync, rename, or directory-fsync failed.
+    ///
+    /// # Soundness
+    ///
+    /// This is the soundness-bearing entry point of the snapshot wire
+    /// protocol. **Preserves**: chunks land at indices `0..total_chunks`
+    /// strictly in order; every accepted chunk is fsynced before the ack is
+    /// returned; the staged file is re-hashed at finalize and only renamed
+    /// into place when the digest matches the digest declared at init.
+    /// **Closes**: chunk reordering, truncation, padding, and bit-flip
+    /// injection by an adversary who can interpose on the wire (a byzantine
+    /// peer cannot install state that diverges from the digest committed at
+    /// init). **Does not preserve**: the *content* validity of the snapshot
+    /// — a peer that legitimately holds the apply path can still install a
+    /// snapshot whose contents are correct-but-stale; freshness is openraft's
+    /// concern, not this layer's.
     pub fn receive(&mut self, frame: SnapshotFrame) -> Result<SnapshotAck, SnapshotReceiveError> {
         match frame {
             SnapshotFrame::Init(init) => self.receive_init(init),
@@ -220,6 +244,11 @@ impl SnapshotFileReceiver {
     }
 
     /// Aborts the active transfer after a leader-change event.
+    ///
+    /// # Errors
+    ///
+    /// - [`SnapshotReceiveError::Io`] — removal of the staged `.part` file
+    ///   failed for a reason other than `NotFound`.
     pub fn abort_on_leader_change(&mut self) -> Result<bool, SnapshotReceiveError> {
         let Some(active) = self.active.take() else {
             return Ok(false);
@@ -357,6 +386,7 @@ impl SnapshotFileReceiver {
         }
         remove_if_exists(&self.installed_path)?;
         std::fs::rename(&staged_path, &self.installed_path)?;
+        sync_parent_dir(&self.installed_path)?;
         Ok(SnapshotAck::Complete {
             snapshot_id,
             installed_path: self.installed_path.clone(),
@@ -416,4 +446,32 @@ fn remove_if_exists(path: &Path) -> Result<(), std::io::Error> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     }
+}
+
+/// Fsyncs the parent directory of `path` so a preceding rename is durable.
+///
+/// On POSIX, `std::fs::rename` updates the parent directory inode and
+/// durability across a crash requires fsyncing that directory. On Windows,
+/// `std::fs::File::open` on a directory rejects with `PERMISSION_DENIED`
+/// because Rust does not pass `FILE_FLAG_BACKUP_SEMANTICS`; NTFS rename is
+/// metadata-journaled regardless, so the directory fsync is unnecessary
+/// there and we skip the call.
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) -> Result<(), std::io::Error> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    match File::open(parent) {
+        Ok(dir) => dir.sync_all(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
 }

@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 #[tokio::test]
 async fn vote_rpc_uses_cbor_request_response_channel() {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(8);
     let mut factory = LibP2pNetworkFactory::new(tx);
     let mut client = factory.new_client(2, &BasicNode::new("/memory/2")).await;
 

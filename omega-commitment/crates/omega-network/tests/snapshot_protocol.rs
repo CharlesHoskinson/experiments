@@ -170,6 +170,67 @@ fn receiver_rejects_extra_zero_length_chunk_after_declared_total() {
 }
 
 #[test]
+fn receiver_accepts_zero_length_chunk_within_declared_total() {
+    // Sender declares total_chunks=2, total_bytes=N. The first chunk is empty,
+    // the second carries N bytes. The protocol should accept this — the byte
+    // accounting is "cumulative" and both per-chunk and per-message size
+    // checks are upper bounds. Pinning behaviour either way prevents drift.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let installed = dir.path().join("installed.sqlite");
+    let mut receiver = SnapshotFileReceiver::new(dir.path(), &installed);
+
+    let payload = vec![6_u8; 17];
+    let digest = {
+        use sha3::Digest;
+        let mut hasher = sha3::Sha3_256::new();
+        hasher.update(&payload);
+        let out = hasher.finalize();
+        let mut sha = [0_u8; 32];
+        sha.copy_from_slice(&out);
+        sha
+    };
+
+    receiver
+        .receive(SnapshotFrame::Init(omega_network::snapshot::SnapshotInit {
+            snapshot_id: "snap-zlen".into(),
+            total_chunks: 2,
+            total_bytes: payload.len() as u64,
+            sha3_of_full: digest,
+        }))
+        .expect("init ack");
+    receiver
+        .receive(SnapshotFrame::Chunk(
+            omega_network::snapshot::SnapshotChunk {
+                snapshot_id: "snap-zlen".into(),
+                chunk_idx: 0,
+                payload: Vec::new(),
+            },
+        ))
+        .expect("zero-length chunk accepted");
+    receiver
+        .receive(SnapshotFrame::Chunk(
+            omega_network::snapshot::SnapshotChunk {
+                snapshot_id: "snap-zlen".into(),
+                chunk_idx: 1,
+                payload: payload.clone(),
+            },
+        ))
+        .expect("payload chunk accepted");
+    let ack = receiver
+        .receive(SnapshotFrame::Finalize(
+            omega_network::snapshot::SnapshotFinalize {
+                snapshot_id: "snap-zlen".into(),
+                sha3_of_full: digest,
+            },
+        ))
+        .expect("finalize ack");
+    assert!(matches!(
+        ack,
+        omega_network::snapshot::SnapshotAck::Complete { .. }
+    ));
+}
+
+#[test]
 fn leader_change_aborts_active_snapshot_and_discards_partial_file() {
     let dir = tempfile::tempdir().expect("tempdir");
     let installed = dir.path().join("installed.sqlite");
