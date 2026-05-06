@@ -42,6 +42,27 @@ role Validator:
         # served or been skipped this rotation
         self.served_or_skipped = set()
 
+    atomic action ProposeBlock:
+        require self.term <= MAX_TERM
+        require self.term in chain.leader_for_term
+        require chain.leader_for_term.get(self.term, -1) == self.__id__
+        # leader extends its longest notarized chain
+        parent = chain.blocks[self.head]
+        require parent.height < MAX_HEIGHT
+        batch = oneof list(chain.pending_batches)
+        new_id = "B" + str(self.term) + "_" + str(parent.height + 1) + "_" + batch
+        # Honest leaders only propose if id is fresh; Byzantine may equivocate
+        # (separate action handles equivocation).
+        require new_id not in chain.blocks
+        chain.blocks[new_id] = record(
+            id=new_id,
+            term=self.term,
+            height=parent.height + 1,
+            parent=parent.id,
+            leader=self.__id__,
+            batch_id=batch,
+        )
+
 # Global protocol state.
 role Chain:
     action Init:
@@ -70,6 +91,11 @@ role Chain:
         self.election_certs = {}
         # batch pool: pending batch ids awaiting proposal
         self.pending_batches = set(["b1", "b2", "b3"])
+
+atomic func is_leader(node_id, term):
+    # In Raftlet, the leader for a term is determined by an election
+    # certificate. We model the assignment via chain.leader_for_term.
+    return chain.leader_for_term.get(term, -1) == node_id
 
 action Init:
     chain = Chain()
