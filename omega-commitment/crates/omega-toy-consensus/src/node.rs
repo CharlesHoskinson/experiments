@@ -3,7 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use jsonrpsee::server::{BatchRequestConfig, ServerBuilder, ServerConfig, ServerHandle};
+use jsonrpsee::server::middleware::rpc::{
+    Batch, Notification, Request, RpcServiceBuilder, RpcServiceT,
+};
+use jsonrpsee::server::{
+    BatchRequestConfig, MethodResponse, ServerBuilder, ServerConfig, ServerHandle,
+};
+use jsonrpsee::types::{ErrorCode, Id};
 use omega_network::rpc::{
     decode_cbor, encode_cbor, OmegaNetworkError, RaftRpcRequest, RaftRpcResponse,
 };
@@ -108,9 +114,13 @@ impl Node {
         let server_config = ServerConfig::builder()
             .max_request_body_size(config.rpc.max_request_bytes)
             .max_subscriptions_per_connection(0)
-            .set_batch_request_config(BatchRequestConfig::Limit(u32::from(config.rpc.max_batch)))
+            .set_batch_request_config(BatchRequestConfig::Unlimited)
             .build();
+        let max_batch = usize::from(config.rpc.max_batch);
+        let rpc_middleware =
+            RpcServiceBuilder::new().layer_fn(move |service| BatchLimit { service, max_batch });
         let server = ServerBuilder::with_config(server_config)
+            .set_rpc_middleware(rpc_middleware)
             .build(config.rpc.bind)
             .await
             .map_err(|error| ConsensusError::RpcBind {
@@ -133,6 +143,59 @@ impl Node {
             join,
             raft,
         })
+    }
+}
+
+#[derive(Clone)]
+struct BatchLimit<S> {
+    service: S,
+    max_batch: usize,
+}
+
+impl<S> RpcServiceT for BatchLimit<S>
+where
+    S: Send
+        + Sync
+        + Clone
+        + RpcServiceT<
+            MethodResponse = MethodResponse,
+            BatchResponse = MethodResponse,
+            NotificationResponse = MethodResponse,
+        > + 'static,
+{
+    type BatchResponse = MethodResponse;
+    type MethodResponse = MethodResponse;
+    type NotificationResponse = MethodResponse;
+
+    fn call<'a>(
+        &self,
+        request: Request<'a>,
+    ) -> impl std::future::Future<Output = Self::MethodResponse> + Send + 'a {
+        let service = self.service.clone();
+        async move { service.call(request).await }
+    }
+
+    fn batch<'a>(
+        &self,
+        batch: Batch<'a>,
+    ) -> impl std::future::Future<Output = Self::BatchResponse> + Send + 'a {
+        let service = self.service.clone();
+        let max_batch = self.max_batch;
+        async move {
+            if batch.len() > max_batch {
+                MethodResponse::error(Id::Null, ErrorCode::InvalidRequest)
+            } else {
+                service.batch(batch).await
+            }
+        }
+    }
+
+    fn notification<'a>(
+        &self,
+        notification: Notification<'a>,
+    ) -> impl std::future::Future<Output = Self::NotificationResponse> + Send + 'a {
+        let service = self.service.clone();
+        async move { service.notification(notification).await }
     }
 }
 
