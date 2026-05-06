@@ -296,7 +296,8 @@ role Chain:
         # state graph. Both branches share the honest three-chain seed;
         # the byz_fork branch additionally injects S2_F (validator 0's
         # competing block) and a single Byzantine vote for it.
-        self.scenario = oneof ["happy_path_three_chain", "byz_fork_height_2"]
+        scenario = oneof ["happy_path_three_chain", "byz_fork_height_2"]
+        self.scenario = scenario
         # M1.5 seeded blocks: GENESIS plus a clean B1->B2->B3 three-chain.
         # Each block is produced by a different honest validator (1, 2, 3)
         # so leader-rotation invariants are respected. Byzantine validator 0
@@ -335,6 +336,21 @@ role Chain:
                 batch_id="b3",
             ),
         }
+        # M2 byz-fork branch: inject Byzantine validator 0's competing block
+        # at (term=2, height=2). Same parent as honest S2, different leader,
+        # different batch_id. Block enters chain.blocks but is NOT certified
+        # in the seed — the M2 property claim is that no path through the
+        # action surface can build a quorum cert for it (honest validators
+        # 1, 2, 3 already voted at slot (2,2) for S2 and won't double-vote).
+        if scenario == "byz_fork_height_2":
+            self.blocks[SEED_B2_F] = record(
+                id=SEED_B2_F,
+                term=2,
+                height=2,
+                parent=SEED_B1,
+                leader=0,
+                batch_id="bz2",
+            )
         # M1.5 seeded notarization votes: validators 1, 2, 3 (all honest)
         # voted for each of B1, B2, B3, totaling 9 votes. Validator 0
         # (Byzantine, by `byz_nodes = set([0])`) did NOT vote in the seed.
