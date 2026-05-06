@@ -1,6 +1,6 @@
 //! Node lifecycle.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use jsonrpsee::server::{BatchRequestConfig, ServerBuilder, ServerConfig, ServerHandle};
@@ -16,9 +16,14 @@ use crate::{ConsensusError, NodeConfig};
 type Raft = openraft::Raft<omega_mock_ledger::OmegaRaftTypeConfig>;
 
 static RAFT_REGISTRY: OnceLock<Mutex<BTreeMap<u64, Raft>>> = OnceLock::new();
+static RAFT_LINK_BLOCKS: OnceLock<Mutex<BTreeSet<(u64, u64)>>> = OnceLock::new();
 
 fn raft_registry() -> &'static Mutex<BTreeMap<u64, Raft>> {
     RAFT_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn raft_link_blocks() -> &'static Mutex<BTreeSet<(u64, u64)>> {
+    RAFT_LINK_BLOCKS.get_or_init(|| Mutex::new(BTreeSet::new()))
 }
 
 /// Live LoganNet node.
@@ -64,7 +69,7 @@ impl Node {
         let (network_factory, outbound_rx) = omega_network::LibP2pNetworkFactory::with_capacity(
             omega_network::DEFAULT_OUTBOUND_CAPACITY,
         );
-        let network_join = spawn_network_dispatcher(outbound_rx);
+        let network_join = spawn_network_dispatcher(config.node_id, outbound_rx);
 
         let raft_config = openraft::Config {
             cluster_name: config.cluster_id.clone(),
@@ -208,18 +213,46 @@ fn route_raft(node_id: u64) -> Option<Raft> {
         .and_then(|registry| registry.get(&node_id).cloned())
 }
 
+pub(crate) fn clear_raft_link_blocks_for_test() {
+    if let Ok(mut blocks) = raft_link_blocks().lock() {
+        blocks.clear();
+    }
+}
+
+pub(crate) fn partition_raft_link_for_test(a: u64, b: u64) {
+    if let Ok(mut blocks) = raft_link_blocks().lock() {
+        blocks.insert((a, b));
+        blocks.insert((b, a));
+    }
+}
+
+fn raft_link_blocked(source: u64, target: u64) -> bool {
+    raft_link_blocks()
+        .lock()
+        .map(|blocks| blocks.contains(&(source, target)))
+        .unwrap_or(true)
+}
+
 fn spawn_network_dispatcher(
+    source: u64,
     mut outbound_rx: mpsc::Receiver<omega_network::OutboundRaftRequest>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(outbound) = outbound_rx.recv().await {
-            let response = dispatch_raft_request(outbound.target, &outbound.payload).await;
+            let response = dispatch_raft_request(source, outbound.target, &outbound.payload).await;
             let _ = outbound.reply.send(response);
         }
     })
 }
 
-async fn dispatch_raft_request(target: u64, payload: &[u8]) -> Result<Vec<u8>, OmegaNetworkError> {
+async fn dispatch_raft_request(
+    source: u64,
+    target: u64,
+    payload: &[u8],
+) -> Result<Vec<u8>, OmegaNetworkError> {
+    if raft_link_blocked(source, target) {
+        return Err(OmegaNetworkError::Timeout);
+    }
     let raft = route_raft(target).ok_or(OmegaNetworkError::OutboundClosed)?;
     let request: RaftRpcRequest = decode_cbor(payload)?;
     let response = match request {

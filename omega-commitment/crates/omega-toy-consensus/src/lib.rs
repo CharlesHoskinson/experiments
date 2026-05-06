@@ -57,6 +57,20 @@ pub mod node;
 pub mod routing;
 pub mod rpc;
 
+/// Test controls for the in-process raft dispatcher.
+#[doc(hidden)]
+pub mod test_support {
+    /// Clears all dispatcher link blocks.
+    pub fn clear_raft_link_blocks() {
+        crate::node::clear_raft_link_blocks_for_test();
+    }
+
+    /// Blocks raft RPC dispatch in both directions between `a` and `b`.
+    pub fn partition_raft_link(a: u64, b: u64) {
+        crate::node::partition_raft_link_for_test(a, b);
+    }
+}
+
 pub use config::{NodeConfig, PeerConfig, RpcConfig};
 pub use error::ConsensusError;
 pub use node::{Node, NodeHandle};

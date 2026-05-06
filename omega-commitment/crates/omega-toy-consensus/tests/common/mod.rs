@@ -8,7 +8,13 @@ use std::time::Duration;
 use omega_toy_consensus::{NodeConfig, PeerConfig, RpcConfig};
 
 /// Builds a 3-node LoganNet config triple.
+#[allow(dead_code)]
 pub fn three_node_configs() -> [NodeConfig; 3] {
+    three_node_configs_with_deadline(Duration::from_secs(3_600))
+}
+
+/// Builds a 3-node LoganNet config triple with a custom apply deadline.
+pub fn three_node_configs_with_deadline(apply_deadline: Duration) -> [NodeConfig; 3] {
     let peer = |id: u64| PeerConfig {
         node_id: id,
         libp2p_addr: format!("/ip4/0.0.0.0/tcp/{}", 4000 + id),
@@ -25,7 +31,7 @@ pub fn three_node_configs() -> [NodeConfig; 3] {
             max_request_bytes: 16 * 1024 * 1024,
         },
         cluster_id: "loganet-test".into(),
-        apply_deadline: Duration::from_secs(3_600),
+        apply_deadline,
     };
     [
         mk(1, vec![peer(2), peer(3)]),
@@ -36,11 +42,20 @@ pub fn three_node_configs() -> [NodeConfig; 3] {
 
 /// Boots a 3-node turmoil sim.
 pub fn three_node_sim() -> turmoil::Sim<'static> {
-    let configs = three_node_configs();
+    three_node_sim_with_deadline(Duration::from_secs(3_600), Duration::from_secs(3_600))
+}
+
+/// Boots a 3-node turmoil sim with custom apply and simulation deadlines.
+pub fn three_node_sim_with_deadline(
+    apply_deadline: Duration,
+    simulation_duration: Duration,
+) -> turmoil::Sim<'static> {
+    omega_toy_consensus::test_support::clear_raft_link_blocks();
+    let configs = three_node_configs_with_deadline(apply_deadline);
     let mut builder = turmoil::Builder::new();
     let mut sim = builder
         .enable_tokio_io()
-        .simulation_duration(Duration::from_secs(3_600))
+        .simulation_duration(simulation_duration)
         .build();
     for cfg in configs {
         let cfg_clone = cfg.clone();
