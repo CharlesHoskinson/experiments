@@ -1,5 +1,7 @@
 //! Failpoint test for replayed stale vote responses.
 
+#![cfg(feature = "failpoints")]
+
 mod common;
 
 use std::time::Duration;

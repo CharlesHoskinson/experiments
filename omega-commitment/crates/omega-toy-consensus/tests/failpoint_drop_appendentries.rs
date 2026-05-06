@@ -1,5 +1,7 @@
 //! Failpoint test for a dropped AppendEntries RPC.
 
+#![cfg(feature = "failpoints")]
+
 mod common;
 
 use std::time::Duration;

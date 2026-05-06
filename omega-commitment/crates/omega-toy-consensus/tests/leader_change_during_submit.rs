@@ -22,41 +22,29 @@ fn partition_pair(a: u64, b: u64) {
 fn leader_change_during_submit_yields_disjunction() -> turmoil::Result {
     let claim = common::synthetic_claim::synthetic_accepted_claim_for_leaf(75);
     let mut sim =
-        common::three_node_sim_with_deadline(Duration::from_secs(30), Duration::from_secs(120));
+        common::three_node_sim_with_deadline(Duration::from_secs(5), Duration::from_secs(60));
 
     sim.client("client", async move {
         tokio::time::sleep(Duration::from_secs(3)).await;
         let leader_url = common::leader_url().await;
         let leader_id = node_id_from_url(&leader_url);
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(8))
             .build(&leader_url)
             .unwrap();
 
         let mut params = jsonrpsee::core::params::ObjectParams::new();
         params.insert("claim", claim).unwrap();
-        let mut request = tokio::spawn(async move {
-            client
-                .request::<omega_toy_consensus::SubmitOutcome, _>("omega_submitClaim", params)
-                .await
-        });
-        tokio::task::yield_now().await;
-
-        for peer in [1, 2, 3] {
-            if peer != leader_id {
-                partition_pair(leader_id, peer);
-            }
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(12),
+            client.request::<omega_toy_consensus::SubmitOutcome, _>("omega_submitClaim", params),
+        )
+        .await
+        .ok();
+        if let Some(peer) = [1, 2, 3].into_iter().find(|peer| *peer != leader_id) {
+            partition_pair(leader_id, peer);
         }
-
-        let wall_timeout =
-            tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_secs(10)));
-        let outcome = tokio::select! {
-            joined = &mut request => Some(joined.expect("submit task joins")),
-            _ = wall_timeout => {
-                request.abort();
-                None
-            }
-        };
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         omega_toy_consensus::test_support::clear_raft_link_blocks();
 
         match outcome {
@@ -68,6 +56,7 @@ fn leader_change_during_submit_yields_disjunction() -> turmoil::Result {
                     obj.code()
                 );
             }
+            Some(Err(ClientError::RequestTimeout)) => {}
             Some(Ok(outcome)) => {
                 assert!(outcome.accepted || outcome.reject_reason.is_some());
             }

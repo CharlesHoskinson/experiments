@@ -1,5 +1,7 @@
 //! Failpoint test for writer closure during submit.
 
+#![cfg(feature = "failpoints")]
+
 mod common;
 
 use std::time::Duration;

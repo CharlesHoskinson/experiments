@@ -7,20 +7,20 @@
 #![cfg(feature = "kani")]
 #![no_main]
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreState {
     Empty,
     Populated,
     MidRestore,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SnapshotKind {
     Valid,
     Malformed,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PostState {
     Valid(u64),
     Rejected,
