@@ -37,15 +37,22 @@ BatchClock = enum("ClientBatch", "ExternalTick")
 # Genesis is a sentinel block at term=0, height=0.
 GENESIS = "G"
 
-# M1.5 seeded scenarios. Only "happy_path_three_chain" is implemented in M1.5;
-# additional values (e.g., "byz_fork") are planned for M2.
-SCENARIO = "happy_path_three_chain"
+# Seeded scenario name. M1.5 introduced "happy_path_three_chain"; M2 adds
+# "byz_fork_height_2" via a `oneof` choice in Chain.Init (see below).
+# This top-level constant is now informational only — the actual selection
+# happens in Chain.Init's `self.scenario = oneof [...]`.
+SCENARIO = "happy_path_three_chain"  # informational; actual choice in Chain.Init
 
 # Pre-seeded block ids for the happy-path scenario. Term/height pairs:
 # B1 = (term=1, height=1), B2 = (term=2, height=2), B3 = (term=3, height=3).
 SEED_B1 = "S1"
 SEED_B2 = "S2"
 SEED_B3 = "S3"
+
+# M2 byz_fork scenario: Byzantine validator 0 produced a competing block at
+# the same (term=2, height=2) slot as the honest S2. Same parent (S1),
+# different leader (0 instead of 2), different batch_id ("bz2" instead of "b2").
+SEED_B2_F = "S2_F"
 
 role Validator:
     atomic action Init:
