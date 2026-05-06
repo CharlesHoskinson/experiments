@@ -92,10 +92,11 @@ role Chain:
         # batch pool: pending batch ids awaiting proposal
         self.pending_batches = set(["b1", "b2", "b3"])
 
-atomic func is_leader(node_id, term):
-    # In Raftlet, the leader for a term is determined by an election
-    # certificate. We model the assignment via chain.leader_for_term.
-    return chain.leader_for_term.get(term, -1) == node_id
+# NOTE: top-level `atomic func` definitions are not reliably callable from role
+# actions in FizzBee v0.4.0 — the parser raises `undefined: <fn>` even when the
+# function is defined before the role. Helpers are therefore inlined directly
+# in each action body throughout this model. See the comment in `ProposeBlock`
+# for the leader-check inlining pattern.
 
 action Init:
     chain = Chain()
