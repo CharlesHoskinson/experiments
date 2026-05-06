@@ -203,6 +203,46 @@ role Validator:
             if b1.height > cur.height:
                 self.finalized = b1.id
 
+    atomic action ByzantineEquivocate:
+        require self.__id__ in byz_nodes
+        require self.term in chain.leader_for_term
+        # leader check inlined (no top-level funcs in v0.4.0)
+        require chain.leader_for_term.get(self.term, -1) == self.__id__
+        # propose a second block at the same (term, height) but different batch
+        existing_at_slot = [b for b in chain.blocks.values()
+                            if b.term == self.term and b.leader == self.__id__]
+        require len(existing_at_slot) >= 1
+        any_existing = existing_at_slot[0]
+        parent = chain.blocks[any_existing.parent]
+        batch = oneof list(chain.pending_batches)
+        require batch != any_existing.batch_id
+        new_id = "BZ" + str(self.term) + "_" + str(any_existing.height) + "_" + batch
+        require new_id not in chain.blocks
+        chain.blocks[new_id] = record(
+            id=new_id,
+            term=self.term,
+            height=any_existing.height,
+            parent=parent.id,
+            leader=self.__id__,
+            batch_id=batch,
+        )
+
+    atomic action ByzantineDoubleVote:
+        require self.__id__ in byz_nodes
+        bid1 = oneof list(chain.blocks.keys())
+        bid2 = oneof list(chain.blocks.keys())
+        require bid1 != bid2
+        b1 = chain.blocks[bid1]
+        b2 = chain.blocks[bid2]
+        require b1.term == b2.term
+        require b1.height == b2.height
+        chain.notar_votes.append(record(
+            term=b1.term, height=b1.height, block_id=bid1, voter=self.__id__,
+        ))
+        chain.notar_votes.append(record(
+            term=b2.term, height=b2.height, block_id=bid2, voter=self.__id__,
+        ))
+
 # Global protocol state.
 role Chain:
     action Init:
