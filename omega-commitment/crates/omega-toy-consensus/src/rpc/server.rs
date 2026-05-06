@@ -112,6 +112,11 @@ impl OmegaRpcServer for OmegaRpcImpl {
             }),
             omega_mock_ledger::LedgerResponse {
                 accepted: false,
+                reject: Some(omega_mock_ledger::LedgerReject::WriterClosed),
+                ..
+            } => Err(crate::rpc::error::writer_closed()),
+            omega_mock_ledger::LedgerResponse {
+                accepted: false,
                 reject: Some(reject),
                 ..
             } => Ok(SubmitOutcome {

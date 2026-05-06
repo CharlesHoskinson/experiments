@@ -306,6 +306,11 @@ fn apply_claim_tx(
     commitment: &OmegaCommitment,
     claim: ClaimTx,
 ) -> Result<(), LedgerError> {
+    #[cfg(feature = "failpoints")]
+    fail::fail_point!("omega_mock_ledger::writer_close", |_| {
+        Err(LedgerError::WriterClosed)
+    });
+
     let block_idx_i64 = sqlite_i64("block_idx", block_idx)?;
     let ParsedClaim {
         public_inputs,

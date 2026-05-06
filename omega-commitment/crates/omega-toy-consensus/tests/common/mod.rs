@@ -5,6 +5,7 @@ pub mod synthetic_claim;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use jsonrpsee::core::client::ClientT;
 use omega_toy_consensus::{NodeConfig, PeerConfig, RpcConfig};
 
 /// Builds a 3-node LoganNet config triple.
@@ -70,6 +71,28 @@ pub fn three_node_sim_with_deadline(
         });
     }
     sim
+}
+
+/// Returns the current leader's localhost RPC URL.
+#[allow(dead_code)]
+pub async fn leader_url() -> String {
+    for node_id in [1, 2, 3] {
+        let url = format!("http://127.0.0.1:800{node_id}");
+        let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .build(&url)
+            .unwrap();
+        let state: omega_toy_consensus::NodeState = client
+            .request(
+                "omega_getState",
+                jsonrpsee::core::params::ArrayParams::new(),
+            )
+            .await
+            .unwrap();
+        if matches!(state.role, omega_toy_consensus::NodeRole::Leader) {
+            return url;
+        }
+    }
+    panic!("no leader found");
 }
 
 fn ledger_path(node_id: u64) -> PathBuf {
