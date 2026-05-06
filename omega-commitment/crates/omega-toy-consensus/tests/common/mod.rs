@@ -12,7 +12,7 @@ pub fn three_node_configs() -> [NodeConfig; 3] {
     let peer = |id: u64| PeerConfig {
         node_id: id,
         libp2p_addr: format!("/ip4/0.0.0.0/tcp/{}", 4000 + id),
-        rpc_url: format!("http://node{id}:800{id}"),
+        rpc_url: format!("http://127.0.0.1:800{id}"),
     };
     let mk = |id: u64, peers: Vec<PeerConfig>| NodeConfig {
         node_id: id,
