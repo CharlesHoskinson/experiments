@@ -2,11 +2,14 @@
 deadlock_detection: false
 liveness: strict
 options:
-  # max_actions=7 is the sweet spot at MAX_TERM=3, MAX_HEIGHT=4: exhausts
-  # leader rotation + reaches an early three-chain finality candidate without
-  # OOMing WSL. The plan's nominal max_actions=60 hits >20k nodes and is
-  # currently impractical; symmetry was investigated in Task 17 — see below.
-  max_actions: 7
+  # M1.5: max_actions=2 with the seeded three-chain in Init.
+  # The seed pre-installs B1->B2->B3 with full certs and leader assignments,
+  # so FinalizeThreeChain is reachable in one action. With 4 seeded blocks
+  # in chain.blocks, action choice multiplicity (CastNotarizationVote *
+  # ByzantineDoubleVote * FinalizeThreeChain triples) bloats fast.
+  # max_actions>=3 OOMs WSL. max_actions=2 verifies finality fires plus its
+  # immediate consequence (one re-check round).
+  max_actions: 2
   max_concurrent_actions: 1
 ---
 
@@ -500,3 +503,10 @@ always assertion LeaderBarringRespected:
         # placeholder: no static post-state check we can do without
         # reconstructing per-validator history at vote time. Pass.
     return True
+
+# M1.5 Task 7 + 8 evidence: the tracer assertion `FinalityNeverFires_TRACER`
+# was added at Task 7 and ran with `chain.finalized` reaching `set(["G", "S1"])`
+# in a reachable state — confirming `FinalizeThreeChain` fires non-vacuously
+# in the seeded happy-path scenario. The tracer was removed at Task 8 (this
+# commit). The seven real safety invariants above PASS over the same state
+# space that contains the non-vacuous chain.finalized witness.
