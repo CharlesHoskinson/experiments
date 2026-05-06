@@ -35,7 +35,7 @@ These are the M1 starting bounds. Tighten via `preinit/shrink.py` for debug; wid
 | `MAX_TERM` | 3 | enough to express two leader rotations |
 | `MAX_HEIGHT` | 4 | enough to form a three-chain (heights 1, 2, 3) plus one extension |
 | `MAX_BATCHES` | 3 | enough to feed three proposed blocks |
-| `max_actions` | 60 | protocol-shaped, not toy-shaped |
+| `max_actions` | 7 (was 60 in plan) | reduced from the plan's 60 because v0.4.0 OOMs WSL above ~10 with this model's action surface; see "Depth caveat" below |
 | `max_concurrent_actions` | 1 | start serial; raise only if needed |
 
 ## Assumptions made explicit
