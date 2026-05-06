@@ -491,12 +491,14 @@ impl RaftSnapshotBuilder<OmegaRaftTypeConfig> for MockLedgerStorage {
 
 #[allow(clippy::result_large_err)]
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, StorageError<u64>> {
-    postcard::to_allocvec(value).map_err(sto_write)
+    let mut bytes = Vec::new();
+    ciborium::into_writer(value, &mut bytes).map_err(sto_write)?;
+    Ok(bytes)
 }
 
 #[allow(clippy::result_large_err)]
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StorageError<u64>> {
-    postcard::from_bytes(bytes).map_err(sto_read)
+    ciborium::from_reader(bytes).map_err(sto_read)
 }
 
 #[allow(clippy::result_large_err)]

@@ -3044,6 +3044,7 @@ dependencies = [
 name = "omega-mock-ledger"
 version = "0.11.0"
 dependencies = [
+ "ciborium",
  "hex",
  "num_cpus",
  "omega-claim-prover",

@@ -608,7 +608,8 @@ fn apply_raft_entries(
         // A rejected command still advances the state-machine index. The log
         // entry has been applied: the deterministic result is a rejection
         // response rather than a state mutation.
-        let last_applied = postcard::to_allocvec(&entry.log_id)
+        let mut last_applied = Vec::new();
+        ciborium::into_writer(&entry.log_id, &mut last_applied)
             .map_err(|error| LedgerError::Codec(error.to_string()))?;
         save_raft_meta(conn, "last_applied_log_id", Some(last_applied.as_slice()))?;
         responses.push(response);

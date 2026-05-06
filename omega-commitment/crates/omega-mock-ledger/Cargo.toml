@@ -18,6 +18,7 @@ omega-commitment-core = { path = "../omega-commitment-core" }
 omega-claim-prover = { path = "../omega-claim-prover" }
 
 hex.workspace = true
+ciborium.workspace = true
 num_cpus.workspace = true
 openraft.workspace = true
 pallas-validate = { workspace = true, optional = true }
