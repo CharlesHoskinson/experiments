@@ -275,7 +275,10 @@ role Validator:
 # Global protocol state.
 role Chain:
     action Init:
-        # all proposed blocks ever seen, keyed by block id
+        # M1.5 seeded blocks: GENESIS plus a clean B1->B2->B3 three-chain.
+        # Each block is produced by a different honest validator (1, 2, 3)
+        # so leader-rotation invariants are respected. Byzantine validator 0
+        # is NOT a leader in the seeded scenario.
         self.blocks = {
             GENESIS: record(
                 id=GENESIS,
@@ -284,7 +287,31 @@ role Chain:
                 parent=None,
                 leader=-1,
                 batch_id=-1,
-            )
+            ),
+            SEED_B1: record(
+                id=SEED_B1,
+                term=1,
+                height=1,
+                parent=GENESIS,
+                leader=1,
+                batch_id="b1",
+            ),
+            SEED_B2: record(
+                id=SEED_B2,
+                term=2,
+                height=2,
+                parent=SEED_B1,
+                leader=2,
+                batch_id="b2",
+            ),
+            SEED_B3: record(
+                id=SEED_B3,
+                term=3,
+                height=3,
+                parent=SEED_B2,
+                leader=3,
+                batch_id="b3",
+            ),
         }
         # all notarization votes ever cast (including Byzantine doubles)
         self.notar_votes = []
