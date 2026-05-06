@@ -1,0 +1,22 @@
+---
+deadlock_detection: false
+liveness: strict
+options:
+  max_actions: 60
+  max_concurrent_actions: 1
+---
+
+# Raftlet safety model — n=4, f=1.
+# See models/raftlet/README.md for the paper-to-model matrix.
+
+N = 4
+F = 1
+QUORUM = 3        # 2f + 1
+MAX_TERM = 3
+MAX_HEIGHT = 4
+MAX_BATCHES = 3
+
+BatchClock = enum("ClientBatch", "ExternalTick")
+
+# Genesis is a sentinel block at term=0, height=0.
+GENESIS = "G"
