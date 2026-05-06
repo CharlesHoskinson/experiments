@@ -314,3 +314,38 @@ always assertion NoConflictingFinalised:
         else:
             fin_by_height[h] = bid
     return True
+
+always assertion PrefixConsistency:
+    # every pair of finalized blocks must be on the same chain.
+    # is_ancestor walk is inlined per FizzBee v0.4.0 (no top-level funcs).
+    fin = list(chain.finalized)
+    for i in range(len(fin)):
+        for j in range(i + 1, len(fin)):
+            a = fin[i]
+            b = fin[j]
+            # check a is ancestor of b OR b is ancestor of a
+            a_is_anc = False
+            cur = b
+            for _ in range(MAX_HEIGHT + 1):
+                if cur == a:
+                    a_is_anc = True
+                if cur == None:
+                    break
+                if cur in chain.blocks:
+                    cur = chain.blocks[cur].parent
+                else:
+                    cur = None
+            b_is_anc = False
+            cur = a
+            for _ in range(MAX_HEIGHT + 1):
+                if cur == b:
+                    b_is_anc = True
+                if cur == None:
+                    break
+                if cur in chain.blocks:
+                    cur = chain.blocks[cur].parent
+                else:
+                    cur = None
+            if not (a_is_anc or b_is_anc):
+                return False
+    return True
