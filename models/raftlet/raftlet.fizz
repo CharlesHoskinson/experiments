@@ -349,3 +349,19 @@ always assertion PrefixConsistency:
             if not (a_is_anc or b_is_anc):
                 return False
     return True
+
+always assertion HonestVoteConsistency:
+    # honest validators (NOT in byz_nodes) never have two distinct votes
+    # for the same (term, height) slot.
+    for v in validators:
+        if v.__id__ in byz_nodes:
+            continue
+        seen_slots = set()
+        for vote in chain.notar_votes:
+            if vote.voter != v.__id__:
+                continue
+            slot = (vote.term, vote.height)
+            if slot in seen_slots:
+                return False
+            seen_slots.add(slot)
+    return True
