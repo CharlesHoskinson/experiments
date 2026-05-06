@@ -180,6 +180,29 @@ role Validator:
         if len(self.served_or_skipped) >= N:
             self.served_or_skipped = set([winner])
 
+    atomic action FinalizeThreeChain:
+        # find three notarized blocks b1 -> b2 -> b3 with consecutive terms
+        # and consecutive heights; finalize b1.
+        require len(self.known_certs) >= 3
+        b1_id = oneof list(self.known_certs)
+        b2_id = oneof list(self.known_certs)
+        b3_id = oneof list(self.known_certs)
+        b1 = chain.blocks[b1_id]
+        b2 = chain.blocks[b2_id]
+        b3 = chain.blocks[b3_id]
+        require b2.parent == b1.id
+        require b3.parent == b2.id
+        require b2.term == b1.term + 1
+        require b3.term == b2.term + 1
+        require b2.height == b1.height + 1
+        require b3.height == b2.height + 1
+        chain.finalized.add(b1.id)
+        # honest validator advances local finalized cursor if higher
+        if self.__id__ not in byz_nodes:
+            cur = chain.blocks[self.finalized]
+            if b1.height > cur.height:
+                self.finalized = b1.id
+
 # Global protocol state.
 role Chain:
     action Init:
@@ -238,4 +261,16 @@ always assertion QuorumSignerDistinct:
     for bid in chain.certs:
         if len(chain.certs[bid]) < QUORUM:
             return False
+    return True
+
+always assertion NoConflictingFinalised:
+    # no two finalized blocks at the same height with different ids
+    fin_by_height = {}
+    for bid in chain.finalized:
+        h = chain.blocks[bid].height
+        if h in fin_by_height:
+            if fin_by_height[h] != bid:
+                return False
+        else:
+            fin_by_height[h] = bid
     return True
