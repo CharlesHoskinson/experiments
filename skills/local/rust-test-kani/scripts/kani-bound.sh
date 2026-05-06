@@ -10,6 +10,15 @@ if [[ -z "$CRATE" ]]; then
     exit 1
 fi
 
+EXTRA_ARGS=()
+if [[ "$CRATE" == "omega-toy-consensus" ]]; then
+    EXTRA_ARGS=(
+        --features kani
+        --bin snapshot-state-machine-kani
+        --harness snapshot_install_total_function
+    )
+fi
+
 # Pinned bounds:
 #   --default-unwind 4        — small loops (7 sub-trees, 8 constraints)
 #   --solver minisat          — stable baseline; cadical is faster but flakier
@@ -18,6 +27,7 @@ fi
 #                                the "VERIFICATION:- SUCCESSFUL/FAILED" line.
 cargo kani \
     -p "$CRATE" \
+    "${EXTRA_ARGS[@]}" \
     --default-unwind 4 \
     --solver minisat \
     --output-format regular

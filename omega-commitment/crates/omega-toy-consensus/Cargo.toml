@@ -16,6 +16,14 @@ path = "src/lib.rs"
 name = "omega-toy-consensus"
 path = "src/bin/omega-toy-consensus.rs"
 
+[[bin]]
+name = "snapshot-state-machine-kani"
+path = "kani-proofs/snapshot_install_state_machine.rs"
+required-features = ["kani"]
+test = false
+bench = false
+doc = false
+
 [dependencies]
 omega-claim-tx = { path = "../omega-claim-tx" }
 omega-mock-ledger = { path = "../omega-mock-ledger" }
@@ -47,8 +55,13 @@ toml = "0.8"
 [features]
 default = []
 failpoints = ["fail/failpoints", "omega-mock-ledger/failpoints", "omega-network/failpoints"]
+kani = []
 turmoil-tests = []
 shuttle-tests = []
+
+[package.metadata.kani]
+unstable = { stubbing = "true" }
+default-unwind = 5
 
 [[bench]]
 name = "bench_submit_p50"
