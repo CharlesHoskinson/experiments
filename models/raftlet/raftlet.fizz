@@ -5,7 +5,7 @@ options:
   # max_actions=7 is the sweet spot at MAX_TERM=3, MAX_HEIGHT=4: exhausts
   # leader rotation + reaches an early three-chain finality candidate without
   # OOMing WSL. The plan's nominal max_actions=60 hits >20k nodes and is
-  # currently impractical until symmetry annotations land in Task 17.
+  # currently impractical; symmetry was investigated in Task 17 — see below.
   max_actions: 7
   max_concurrent_actions: 1
 ---
@@ -19,6 +19,15 @@ QUORUM = 3        # 2f + 1
 MAX_TERM = 3
 MAX_HEIGHT = 4
 MAX_BATCHES = 3
+
+# Symmetry note (Task 17): batch IDs b1/b2/b3 are opaque interchangeable labels
+# and are ideal symmetry candidates. FizzBee v0.4.0 nominal symmetry API is
+# `IDS = symmetry.nominal(name=..., limit=N)` with IDS.choices()/IDS.values()
+# for nondeterministic selection — incompatible with the hardcoded string literals
+# used here. Migrating would require refactoring pending_batches + all batch
+# references to use the dynamic IDS API. Not done; 3,845 unique states remain.
+# Validator-ID symmetry is also unsound: byz_nodes = set([0]) pins validator 0
+# as Byzantine, so permuting validators changes which node is Byzantine.
 
 BatchClock = enum("ClientBatch", "ExternalTick")
 
