@@ -2,11 +2,11 @@
 deadlock_detection: false
 liveness: strict
 options:
-  # max_actions=10 is the sweet spot at MAX_TERM=3, MAX_HEIGHT=4: exhausts
-  # leader rotation + a 3-chain finality scenario without OOMing WSL.
-  # The full max_actions=60 run from raftlet.md hits >20k nodes and is
+  # max_actions=7 is the sweet spot at MAX_TERM=3, MAX_HEIGHT=4: exhausts
+  # leader rotation + reaches an early three-chain finality candidate without
+  # OOMing WSL. The plan's nominal max_actions=60 hits >20k nodes and is
   # currently impractical until symmetry annotations land in Task 17.
-  max_actions: 10
+  max_actions: 7
   max_concurrent_actions: 1
 ---
 
