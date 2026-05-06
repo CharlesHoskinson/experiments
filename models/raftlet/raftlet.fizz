@@ -243,6 +243,16 @@ role Validator:
             term=b2.term, height=b2.height, block_id=bid2, voter=self.__id__,
         ))
 
+    atomic action TryForgeCertificate:
+        # Byzantine attempt to install a malformed cert.
+        # This is a NO-OP action that exists to confirm the
+        # QuorumSignerDistinct invariant + the FormNotarizationCertificate
+        # quorum guard form a closed barrier. If a future refactor opens a
+        # path for an under-quorum or duplicate-signer cert to enter
+        # chain.certs, this action plus the assertion will catch it.
+        # Currently a no-op — no state change.
+        require self.__id__ in byz_nodes
+
 # Global protocol state.
 role Chain:
     action Init:
