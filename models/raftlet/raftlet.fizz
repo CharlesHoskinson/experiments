@@ -365,6 +365,17 @@ role Chain:
             record(term=3, height=3, block_id=SEED_B3, voter=2),
             record(term=3, height=3, block_id=SEED_B3, voter=3),
         ]
+        # M2 byz-fork branch: Byzantine validator 0 has cast ONE vote
+        # for S2_F. With QUORUM=3 and only one vote, no honest path can
+        # form a cert for S2_F — the property `QuorumSignerDistinct` plus
+        # `FormNotarizationCertificate`'s `len(voters) >= QUORUM` guard
+        # together prevent it. Honest validators 1, 2, 3 already voted at
+        # slot (2,2) for S2 and the honest-vote guard prevents them from
+        # voting for S2_F (which is also at slot (2,2)).
+        if scenario == "byz_fork_height_2":
+            self.notar_votes.append(
+                record(term=2, height=2, block_id=SEED_B2_F, voter=0)
+            )
         # M1.5 seeded certs: each seeded block has a 3-voter cert from {1,2,3}.
         self.certs = {
             SEED_B1: set([1, 2, 3]),
