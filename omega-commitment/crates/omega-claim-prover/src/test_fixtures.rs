@@ -89,7 +89,7 @@ fn witness_at(index: u64) -> (OmegaCommitment, MembershipWitness) {
         tree_depth: tree.depth() as u8,
         per_sub_tree_root: tree.root(),
         bundle_root_blake3: commitment.bundle_root_blake3,
-        nullifier: hash(0xA1),
+        nullifier: blake3_256(&payload),
         recipient_starstream_addr: hash(0xB2),
     };
     let witness = MembershipWitness::from_inclusion(public, payload, inclusion);
@@ -111,5 +111,19 @@ mod tests {
         };
         assert_eq!(claim.public.leaf_index, 42);
         assert!(claim.proof.0.len() > 128);
+    }
+
+    #[test]
+    fn builds_distinct_nullifiers_for_distinct_leaves() {
+        let left = build_synthetic_accepted_claim(41);
+        let right = build_synthetic_accepted_claim(42);
+
+        let ClaimTx::Utxo(left) = left else {
+            panic!("fixture must build a single UTxO claim");
+        };
+        let ClaimTx::Utxo(right) = right else {
+            panic!("fixture must build a single UTxO claim");
+        };
+        assert_ne!(left.public.nullifier, right.public.nullifier);
     }
 }
