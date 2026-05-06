@@ -292,6 +292,11 @@ role Validator:
 # Global protocol state.
 role Chain:
     action Init:
+        # M2 scenario selector. Each value spawns one Init branch in the
+        # state graph. Both branches share the honest three-chain seed;
+        # the byz_fork branch additionally injects S2_F (validator 0's
+        # competing block) and a single Byzantine vote for it.
+        self.scenario = oneof ["happy_path_three_chain", "byz_fork_height_2"]
         # M1.5 seeded blocks: GENESIS plus a clean B1->B2->B3 three-chain.
         # Each block is produced by a different honest validator (1, 2, 3)
         # so leader-rotation invariants are respected. Byzantine validator 0
