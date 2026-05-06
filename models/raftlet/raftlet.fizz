@@ -558,3 +558,17 @@ always assertion LeaderBarringRespected:
 # combined state space (both happy_path_three_chain and byz_fork_height_2
 # scenarios) — including non-vacuous proof that no path in the action
 # surface can build a quorum cert for S2_F or finalise it.
+
+always eventually assertion EventuallyFinalise:
+    # M3 liveness: under weak-fair scheduling on FinalizeThreeChain (added
+    # in Task 3), some block other than GENESIS is eventually in
+    # chain.finalized. Without that fairness annotation this assertion
+    # should FAIL — that failure is the negative-control evidence that
+    # fairness is load-bearing.
+    # NOTE: bare `eventually` panics in v0.4.0 model checker; `always eventually`
+    # (GF) is the supported compound form and is semantically equivalent here
+    # since finalized is monotone — once a non-GENESIS block enters it stays.
+    for b in chain.finalized:
+        if b != GENESIS:
+            return True
+    return False
