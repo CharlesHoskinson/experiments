@@ -19,12 +19,23 @@ pub trait OmegaRpc {
     ///
     /// Returns the applied log index on success, or a structured error on
     /// rejection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JSON-RPC error when this node is not leader, proof
+    /// verification fails, the claim is malformed, the nullifier replays, the
+    /// writer actor is unavailable, or the apply deadline elapses.
     #[method(name = "submitClaim")]
     async fn submit_claim(&self, claim: ClaimTx) -> Result<SubmitOutcome, ErrorObjectOwned>;
 
     /// Reads the node's current consensus and ledger state.
     ///
     /// Read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JSON-RPC error when the ledger reader cannot return the
+    /// counters needed for the state view.
     #[method(name = "getState")]
     async fn get_state(&self) -> Result<NodeState, ErrorObjectOwned>;
 }
@@ -62,14 +73,29 @@ pub(crate) struct OmegaRpcShared {
 impl OmegaRpcServer for OmegaRpcImpl {
     /// Replicates a claim through raft, then returns the applied log index.
     ///
+    /// # Errors
+    ///
+    /// - `-32000 NotLeader` - openraft reports that this node is not leader.
+    /// - `-32001 Verify` - proof verification failed before apply.
+    /// - `-32002 InvalidClaim` - the claim could not be converted into a
+    ///   ledger command.
+    /// - `-32003 Replay` - the ledger rejected an already-seen nullifier.
+    /// - `-32004 WriterClosed` - the writer actor channel is unavailable.
+    /// - `-32005 Timeout` - `apply_deadline` elapsed before raft returned.
+    /// - `-32603 InternalError` - openraft or storage returned an unexpected
+    ///   internal failure.
+    ///
     /// # Soundness
     ///
-    /// Preserved: every accepted claim enters the mock-ledger state machine
-    /// through `Raft::client_write`, so followers apply the same command in
-    /// log order. Closed attack: followers cannot bypass the leader by calling
-    /// the writer actor directly through this RPC path. Fails on: openraft
-    /// forwarding, timeout, or ledger rejection, each mapped to the fixed
-    /// JSON-RPC/application result vocabulary.
+    /// Preserves: every accepted claim enters the mock-ledger state machine
+    /// through `Raft::client_write`, so followers apply the same command in log
+    /// order.
+    ///
+    /// Closes: followers cannot bypass the leader by calling the writer actor
+    /// directly through this RPC path.
+    ///
+    /// Fails on: openraft forwarding, timeout, or ledger rejection, each mapped
+    /// to the fixed JSON-RPC/application result vocabulary.
     async fn submit_claim(&self, claim: ClaimTx) -> Result<SubmitOutcome, ErrorObjectOwned> {
         use crate::routing::{translate_client_write_error, translate_ledger_error};
 
@@ -138,12 +164,20 @@ impl OmegaRpcServer for OmegaRpcImpl {
 
     /// Returns the current raft role and point-in-time ledger counters.
     ///
+    /// # Errors
+    ///
+    /// - `-32603 InternalError` - the ledger reader could not return
+    ///   nullifier or Starstream UTxO counters.
+    ///
     /// # Soundness
     ///
-    /// Preserved: this method is read-only and never touches the writer actor
-    /// or raft client-write path. Closed attack: state inspection cannot submit
-    /// or reorder claims. Fails on: ledger reader errors, which are translated
-    /// through the fixed ledger error mapper.
+    /// Preserves: this method is read-only and never touches the writer actor
+    /// or raft client-write path.
+    ///
+    /// Closes: state inspection cannot submit or reorder claims.
+    ///
+    /// Fails on: ledger reader errors, which are translated through the fixed
+    /// ledger error mapper.
     async fn get_state(&self) -> Result<NodeState, ErrorObjectOwned> {
         use crate::rpc::types::{LogIdView, NodeRole};
 

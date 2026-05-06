@@ -43,8 +43,8 @@
 //! - Bring-up and shutdown are async; everything else is sync where possible.
 //! - Errors surface via [`ConsensusError`] internally and JSON-RPC error codes
 //!   `-32000..-32005` externally; mapping lives in `routing` + `rpc::error`.
-//! - Every public item carries `# Errors` and `# Soundness` blocks per
-//!   `skills/local/omega-rustdoc-style/SKILL.md`.
+//! - Soundness-bearing public items document the invariant they preserve, the
+//!   attack class they close, and the failure mode left to callers.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -82,19 +82,22 @@ pub use rpc::types::{LogIdView, NodeRole, NodeState, SubmitOutcome};
 /// # Errors
 ///
 /// - [`ConsensusError::Storage`] - SQLite open or schema initialisation failed.
-/// - [`ConsensusError::Network`] - libp2p bind or peer dial failed.
 /// - [`ConsensusError::RpcBind`] - the JSON-RPC HTTP server failed to bind
 ///   `config.rpc.bind`.
 /// - [`ConsensusError::Raft`] - openraft rejected the initial membership.
 ///
 /// # Soundness
 ///
-/// Bring-up is idempotent on storage: the writer-actor lifecycle (see
-/// `omega-mock-ledger`'s crate-level `# Soundness` block) is preserved across
-/// restarts. Bring-up does NOT validate cluster identity beyond the
-/// `cluster_id` string equality check - operators must ensure `--cluster-id`
-/// matches across all peers, otherwise openraft will accept the membership and
-/// quorum will form across logically-distinct clusters.
+/// Preserves: all accepted writes enter the mock-ledger through openraft's
+/// replicated state-machine path after SQLite storage and the writer actor are
+/// mounted.
+///
+/// Closes: direct localhost RPC access cannot reach the writer actor without a
+/// successful `Raft::client_write`.
+///
+/// Fails on: cluster identity is only the `cluster_id` string supplied by the
+/// operator. Mismatched deployment intent with matching strings can still form
+/// quorum across logically distinct clusters.
 ///
 /// # Examples
 ///

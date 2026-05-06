@@ -32,22 +32,21 @@ pub struct NotLeaderHint {
 ///
 /// # Soundness
 ///
-/// The hint preserves stateless leader forwarding: this server does not proxy
-/// writes and only reports the leader id and RPC URL it currently knows. This
-/// closes the stale-proxy class where a follower silently forwards a client
-/// write after leadership has moved. It does not prove the hinted URL is still
-/// leader by the time a client retries; clients must treat absent or stale
-/// hints as "leader unknown" and retry against any peer.
+/// Preserves: leader forwarding stays stateless. This server does not proxy
+/// writes and only reports the leader id and RPC URL it currently knows.
+///
+/// Closes: a follower cannot silently forward a client write after leadership
+/// has moved.
+///
+/// Fails on: the hinted URL is not proven to still be leader by the time a
+/// client retries; clients must treat absent or stale hints as "leader
+/// unknown" and retry against any peer.
 pub fn not_leader(leader_id: Option<u64>, leader_rpc_url: Option<String>) -> ErrorObjectOwned {
-    let hint = NotLeaderHint {
-        leader_id,
-        leader_rpc_url,
-    };
-    ErrorObjectOwned::owned(
-        CODE_NOT_LEADER,
-        "not leader",
-        Some(serde_json::to_value(&hint).expect("hint serialises")),
-    )
+    let hint = serde_json::json!({
+        "leader_id": leader_id,
+        "leader_rpc_url": leader_rpc_url,
+    });
+    ErrorObjectOwned::owned(CODE_NOT_LEADER, "not leader", Some(hint))
 }
 
 /// Builds a `-32001 Verify` error.

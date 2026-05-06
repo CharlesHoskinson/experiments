@@ -56,17 +56,25 @@ impl Node {
     ///
     /// # Errors
     ///
-    /// Returns [`ConsensusError`] when storage open, raft construction,
-    /// membership initialization, or JSON-RPC binding fails.
+    /// - [`ConsensusError::Storage`] - SQLite open, schema initialization, or
+    ///   writer actor startup failed.
+    /// - [`ConsensusError::Raft`] - openraft construction, initial membership,
+    ///   or raft dispatcher registry locking failed.
+    /// - [`ConsensusError::RpcBind`] - the JSON-RPC server failed to bind the
+    ///   configured address.
     ///
     /// # Soundness
     ///
-    /// Preserved: every submitted claim reaches the mock-ledger through
+    /// Preserves: every submitted claim reaches the mock-ledger through
     /// openraft's state-machine apply path, preserving the ledger
-    /// verify-before-mutate invariant. Closed attack: direct RPC access never
-    /// exposes the writer actor, only the raft client-write API. Fails on:
-    /// storage open errors, raft initialization errors, RPC bind errors, and
-    /// malformed static node configuration.
+    /// verify-before-mutate invariant.
+    ///
+    /// Closes: direct RPC access never exposes the writer actor, only the raft
+    /// client-write API.
+    ///
+    /// Fails on: storage open errors, raft initialization errors, registry
+    /// locking errors, RPC bind errors, and malformed static node
+    /// configuration.
     pub async fn start(config: NodeConfig) -> Result<NodeHandle, ConsensusError> {
         let ledger = Arc::new(omega_mock_ledger::MockLedger::open(&config.data_dir)?);
         let storage = omega_mock_ledger::MockLedgerStorage::new((*ledger).clone());
@@ -212,9 +220,12 @@ impl NodeHandle {
     ///
     /// # Soundness
     ///
-    /// Preserved: shutdown stops accepting external submits before removing
-    /// the node from raft RPC dispatch. Closed attack: stale peers cannot
-    /// route new raft RPCs to a dropped handle after unregister completes.
+    /// Preserves: shutdown stops accepting external submits before removing
+    /// the node from raft RPC dispatch.
+    ///
+    /// Closes: stale peers cannot route new raft RPCs to a dropped handle after
+    /// unregister completes.
+    ///
     /// Fails on: join failures or openraft shutdown failures.
     pub async fn shutdown(self) -> Result<(), ConsensusError> {
         let _ = self.server_handle.stop();

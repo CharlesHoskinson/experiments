@@ -14,13 +14,15 @@ use crate::rpc::error;
 ///
 /// # Soundness
 ///
-/// The translator is total over the openraft client-write error space used by
-/// Group 1: `ForwardToLeader` becomes `-32000` with the leader hint, while
-/// membership-change errors collapse to `-32603 internal error` because Group
-/// 1 has static membership and does not expose membership-change RPCs. This
-/// closes the class where a follower response is mistaken for a local writer
-/// failure. It does not verify that the hinted leader is still current after
-/// the response leaves this node.
+/// Preserves: the openraft client-write rejection class remains visible at the
+/// JSON-RPC boundary. `ForwardToLeader` becomes `-32000` with a leader hint,
+/// while membership-change errors collapse to `-32603 internal error` because
+/// Group 1 has static membership and exposes no membership-change RPCs.
+///
+/// Closes: a follower response cannot be mistaken for a local writer failure.
+///
+/// Fails on: the hinted leader is not revalidated after the response leaves
+/// this node, so clients must tolerate stale or absent hints.
 pub fn translate_client_write_error(
     err: ClientWriteError<u64, openraft::BasicNode>,
     resolve_leader_url: impl FnOnce(u64) -> Option<String>,
@@ -45,12 +47,16 @@ pub fn translate_client_write_error(
 ///
 /// # Soundness
 ///
-/// The mapping preserves the mock-ledger rejection class: verifier failures
-/// become `-32001`, invalid claim shape becomes `-32002`, replay becomes
-/// `-32003` with the nullifier coordinates, and writer-channel loss becomes
-/// retryable `-32004`. This closes the class where a replay or malformed claim
-/// is reported as a retryable infrastructure failure. It does not expose raw
-/// SQLite or I/O details to clients; those collapse to `-32603`.
+/// Preserves: the mock-ledger rejection class remains visible at the JSON-RPC
+/// boundary. Verifier failures become `-32001`, invalid claim shape becomes
+/// `-32002`, replay becomes `-32003` with nullifier coordinates, and
+/// writer-channel loss becomes retryable `-32004`.
+///
+/// Closes: replay and malformed-claim failures cannot be reported as retryable
+/// infrastructure failures.
+///
+/// Fails on: raw SQLite and I/O details are intentionally not exposed to
+/// clients; those collapse to `-32603`.
 pub fn translate_ledger_error(err: LedgerError) -> ErrorObjectOwned {
     match err {
         LedgerError::Verify(detail) => error::verify(detail.to_string()),
