@@ -84,6 +84,21 @@ role Validator:
         if not self.byz:
             self.voted_slots.add((b.term, b.height))
 
+    atomic action FormNotarizationCertificate:
+        bid = oneof list(chain.blocks.keys())
+        require bid != GENESIS
+        require bid not in chain.certs
+        # collect voter ids for this block
+        voters = set([v.voter for v in chain.notar_votes if v.block_id == bid])
+        require len(voters) >= QUORUM
+        chain.certs[bid] = voters
+        # update local view: head moves to the longest known notarized chain
+        b = chain.blocks[bid]
+        head_b = chain.blocks[self.head]
+        if b.height > head_b.height:
+            self.head = bid
+        self.known_certs.add(bid)
+
 # Global protocol state.
 role Chain:
     action Init:
@@ -124,3 +139,10 @@ action Init:
     validators = []
     for _ in range(N):
         validators.append(Validator())
+
+always assertion QuorumSignerDistinct:
+    # every formed certificate has at least QUORUM distinct voters
+    for bid in chain.certs:
+        if len(chain.certs[bid]) < QUORUM:
+            return False
+    return True
