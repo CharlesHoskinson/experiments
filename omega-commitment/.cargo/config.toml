@@ -1,3 +1,6 @@
 [alias]
 fmt-check = "fmt --all -- --check"
 lint = "clippy --workspace --all-targets -- -D warnings"
+
+[env]
+__COMPAT_LAYER = { value = "RunAsInvoker", force = true }
