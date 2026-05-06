@@ -25,7 +25,9 @@ use openraft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
     VoteRequest, VoteResponse,
 };
-use openraft::{BasicNode, Vote};
+use openraft::BasicNode;
+#[cfg(feature = "failpoints")]
+use openraft::Vote;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::rpc::{decode_cbor, encode_cbor, OmegaNetworkError, RaftRpcRequest, RaftRpcResponse};

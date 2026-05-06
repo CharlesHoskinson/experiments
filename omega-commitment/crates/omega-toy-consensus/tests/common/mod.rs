@@ -42,6 +42,7 @@ pub fn three_node_configs_with_deadline(apply_deadline: Duration) -> [NodeConfig
 }
 
 /// Boots a 3-node turmoil sim.
+#[allow(dead_code)]
 pub fn three_node_sim() -> turmoil::Sim<'static> {
     three_node_sim_with_deadline(Duration::from_secs(3_600), Duration::from_secs(3_600))
 }
