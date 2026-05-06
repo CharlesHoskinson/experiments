@@ -365,3 +365,41 @@ always assertion HonestVoteConsistency:
                 return False
             seen_slots.add(slot)
     return True
+
+always assertion FinalityJustifiedByThreeChain:
+    # every finalized block (other than GENESIS) must be justified by a
+    # three-chain b1 -> b2 -> b3 with consecutive terms and consecutive
+    # heights, all three with notarization certs, where b1 is this finalized
+    # block.
+    for fid in chain.finalized:
+        if fid == GENESIS:
+            continue
+        if fid not in chain.certs:
+            return False
+        b1 = chain.blocks[fid]
+        found = False
+        # iterate keys, look up values explicitly (no tuple-unpack in v0.4.0)
+        for b2id in chain.blocks:
+            b2 = chain.blocks[b2id]
+            if b2.parent != fid:
+                continue
+            if b2.term != b1.term + 1:
+                continue
+            if b2.height != b1.height + 1:
+                continue
+            if b2id not in chain.certs:
+                continue
+            for b3id in chain.blocks:
+                b3 = chain.blocks[b3id]
+                if b3.parent != b2id:
+                    continue
+                if b3.term != b2.term + 1:
+                    continue
+                if b3.height != b2.height + 1:
+                    continue
+                if b3id not in chain.certs:
+                    continue
+                found = True
+        if not found:
+            return False
+    return True
