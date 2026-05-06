@@ -75,13 +75,58 @@ Accepted counterexamples that mapped to Rust core requirements (per raftlet.md l
 
 ## Status
 
+Final M1 run: **17,281 valid nodes, 3,845 unique states, 17.8s, PASSED on all invariants** at `max_actions=7`.
+
 | Property class | Property | Status |
 |---|---|---|
-| Safety | `NoConflictingFinalised` | TODO (Task 10) |
-| Safety | `PrefixConsistency` | TODO (Task 12) |
-| Safety | `HonestVoteConsistency` | TODO (Task 13) |
-| Safety | `QuorumSignerDistinct` | TODO (Task 8) |
-| Safety | `LeaderBarringRespected` | TODO (Task 15) |
-| Safety | `FinalityJustifiedByThreeChain` | TODO (Task 14) |
-| Safety | `ForgedCertRejected` | TODO (Task 16) |
-| Liveness | `EventuallyFinalise` | deferred to follow-up plan |
+| Safety | `NoConflictingFinalised` | PASSED (vacuous — see depth caveat below) |
+| Safety | `PrefixConsistency` | PASSED (vacuous) |
+| Safety | `HonestVoteConsistency` | PASSED (non-vacuous; honest vote guards exercised) |
+| Safety | `QuorumSignerDistinct` | PASSED (vacuous; no certs form at depth 7) |
+| Safety | `LeaderBarringRespected` | PASSED (placeholder — relies on dynamic guard in `CastElectionVote`) |
+| Safety | `FinalityJustifiedByThreeChain` | PASSED (vacuous) |
+| Safety | `ForgedCertRejected` | PASSED (Byzantine forge action is a no-op; structural guard) |
+| Liveness | `EventuallyFinalise` | deferred to follow-up plan (see "Deferred work" below) |
+
+### Depth caveat (M1 honest reporting)
+
+At the M1 bound `max_actions=7`, election scaffolding consumes most of the action budget (StartElection + 3× CastElectionVote + InstallLeaderCertificate + AdvanceTerm ≈ 6 actions per term rotation). The model never accumulates three notarization certificates in any reachable state, so `FinalizeThreeChain` does not fire. This means:
+
+- The headline safety property `NoConflictingFinalised` holds **structurally** (the action+invariant code is correct) but is exercised only over the trivial `chain.finalized = {GENESIS}` set.
+- The Byzantine surface (`ByzantineEquivocate`, `ByzantineDoubleVote`, `TryForgeCertificate`) is **encoded** but its guards never fire at depth 7 because validator 0 (the sole Byzantine node under the symmetry reduction) is never elected leader within the action budget.
+- `HonestVoteConsistency` IS non-vacuous: honest votes do fire and the slot-deduplication guard is checked across all reachable states.
+
+Lifting the depth caveat requires one of:
+
+1. Larger `max_actions` (currently OOMs WSL above ~10).
+2. Pre-seeding `chain.leader_for_term` and `chain.certs` in `Init` to start a scenario closer to a three-chain candidate.
+3. Symmetry annotations in the v0.4.0-correct API (the plan's `symmetry.nominal([...])` syntax does not match v0.4.0; see `raftlet.fizz` comment block).
+
+These are the natural targets for an M1.5 / M2 refinement.
+
+### v0.4.0 limitations encountered (worth knowing for follow-up work)
+
+| Limitation | Workaround used |
+|---|---|
+| Top-level `atomic func` not callable from role actions | inline helper bodies |
+| Tuple-unpack in for-loops not supported (`for k, v in d.items():`) | iterate keys, look up explicitly |
+| Cross-instance role mutation not supported (`v.term = x` from another action) | each validator self-updates via `AdvanceTerm` |
+| Records inside shared role sets occasionally raise "unhashable type" | `chain.notar_votes` and `chain.election_votes` are LISTS (allow duplicates) |
+| `symmetry.nominal([...string...])` rejected in v0.4.0 | symmetry deferred; documented inline in `.fizz` |
+| `byz: oneof [True, False]` per-validator + cross-instance reads cause state explosion | hardcoded `byz_nodes = set([0])` (sound under validator-ID symmetry for f=1) |
+
+## Deferred work (post-M1)
+
+Liveness modelling is deferred to a follow-up plan. The intended properties are:
+
+- `EventuallyFinalise`: under fair scheduling, bounded faults, and eventually-delivered messages, finality advances.
+- `BatchClockProgress`: under `BatchClock.ClientBatch`, election rounds eventually complete when batches are available.
+
+Reasons for deferring:
+
+1. Liveness checks require weak-fair scheduling annotations on `ProposeBlock`, `CastNotarizationVote`, `FormNotarizationCertificate`, `FinalizeThreeChain`, `StartElection`, `CastElectionVote`, `InstallLeaderCertificate`, and `AdvanceTerm`. Adding these is mechanical but expands the state space.
+2. Liveness is more sensitive to bound choices than safety — a too-tight `MAX_TERM` produces vacuous PASS results. M1's depth-7 already produces vacuous safety PASSES; liveness would amplify the issue.
+3. The Raftlet paper's liveness argument depends on dissemination and synchrony assumptions that need to be modelled explicitly (raftlet.md line 430). Doing this well requires its own design pass.
+4. The depth caveat above must be lifted first — liveness over a model that doesn't even reach a three-chain is not informative.
+
+The follow-up plan should land at `docs/superpowers/plans/<date>-raftlet-fizzbee-liveness-spec.md` after the depth caveat is addressed.
