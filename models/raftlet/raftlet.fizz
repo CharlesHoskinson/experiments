@@ -22,9 +22,8 @@ BatchClock = enum("ClientBatch", "ExternalTick")
 GENESIS = "G"
 
 role Validator:
-    action Init:
+    atomic action Init:
         self.term = 0
-        self.byz = oneof [True, False]
         # longest notarized chain head observed locally
         self.head = GENESIS
         # locally known notarization certificates: set of block ids
@@ -71,17 +70,17 @@ role Validator:
         # and only vote for blocks extending a locally-known notarized chain
         # (parent has a known cert, or parent is GENESIS). Inlined helper:
         # `extends_longest_notarized(b.id, self.known_certs)`.
-        if not self.byz:
+        if self.__id__ not in byz_nodes:
             require (b.term, b.height) not in self.voted_slots
             require b.parent == GENESIS or b.parent in self.known_certs
             require b.term <= self.term + 1
-        chain.notar_votes.add(record(
+        chain.notar_votes.append(record(
             term=b.term,
             height=b.height,
             block_id=bid,
             voter=self.__id__,
         ))
-        if not self.byz:
+        if self.__id__ not in byz_nodes:
             self.voted_slots.add((b.term, b.height))
 
     atomic action FormNotarizationCertificate:
@@ -99,6 +98,84 @@ role Validator:
             self.head = bid
         self.known_certs.add(bid)
 
+    atomic action StartElection:
+        next_term = self.term + 1
+        require next_term <= MAX_TERM
+        require next_term not in chain.leader_for_term
+        # one self-nomination per term per validator
+        require next_term not in self.election_votes
+        # leader-barring: candidate cannot have served already this rotation
+        # unless every other validator has also served or been skipped
+        if self.__id__ in self.served_or_skipped and len(self.served_or_skipped) < N:
+            require False
+        # batch-clock trigger: at least one pending batch OR an external tick
+        trigger = oneof [BatchClock.ClientBatch, BatchClock.ExternalTick]
+        if trigger == BatchClock.ClientBatch:
+            require len(chain.pending_batches) >= 1
+        # candidate proposes itself for next_term — emit a self-vote
+        chain.election_votes.append(record(
+            term=next_term,
+            candidate=self.__id__,
+            voter=self.__id__,
+        ))
+        self.election_votes.add(next_term)
+
+    atomic action CastElectionVote:
+        # vote for an existing candidate at term self.term + 1
+        next_term = self.term + 1
+        require next_term <= MAX_TERM
+        require next_term not in chain.leader_for_term
+        require next_term not in self.election_votes
+        # find any candidate someone has already proposed
+        candidates = set([v.candidate for v in chain.election_votes if v.term == next_term])
+        require len(candidates) > 0
+        cand = oneof list(candidates)
+        # honest voters respect leader barring
+        if self.__id__ not in byz_nodes:
+            require cand not in self.served_or_skipped or len(self.served_or_skipped) >= N
+        chain.election_votes.append(record(
+            term=next_term,
+            candidate=cand,
+            voter=self.__id__,
+        ))
+        self.election_votes.add(next_term)
+
+    atomic action InstallLeaderCertificate:
+        next_term = self.term + 1
+        require next_term <= MAX_TERM
+        require next_term not in chain.leader_for_term
+        # find a candidate with QUORUM votes — build cand_votes incrementally
+        cand_votes = {}
+        for v in chain.election_votes:
+            if v.term == next_term:
+                if v.candidate not in cand_votes:
+                    cand_votes[v.candidate] = set()
+                cand_votes[v.candidate].add(v.voter)
+        # pick winner: any candidate with >= QUORUM votes
+        # NOTE v0.4.0: no tuple-unpack in for; iterate keys then look up.
+        winner = -1
+        for cand in cand_votes:
+            if len(cand_votes[cand]) >= QUORUM:
+                winner = cand
+        require winner != -1
+        chain.leader_for_term[next_term] = winner
+        chain.election_certs[next_term] = cand_votes[winner]
+
+    atomic action AdvanceTerm:
+        # each validator observes the latest installed leader cert and
+        # advances its own term + served_or_skipped barring set
+        # (FizzBee v0.4.0: role instances in arrays cannot be mutated from
+        #  another action — each validator must self-update)
+        # find the highest installed term that we haven't caught up to yet
+        new_term = self.term + 1
+        require new_term in chain.leader_for_term
+        winner = chain.leader_for_term[new_term]
+        self.term = new_term
+        self.served_or_skipped.add(winner)
+        # rotation reset: if everyone has served, clear the set
+        if len(self.served_or_skipped) >= N:
+            self.served_or_skipped = set([winner])
+
 # Global protocol state.
 role Chain:
     action Init:
@@ -114,7 +191,7 @@ role Chain:
             )
         }
         # all notarization votes ever cast (including Byzantine doubles)
-        self.notar_votes = set()
+        self.notar_votes = []
         # all notarization certificates formed (each is a set of voters)
         self.certs = {}   # block_id -> set of voter ids
         # all finalized block ids
@@ -122,7 +199,7 @@ role Chain:
         # leader assignment per term (term -> validator id)
         self.leader_for_term = {0: -1}
         # election votes ever cast
-        self.election_votes = set()
+        self.election_votes = []
         # election certificates: term -> set of voters
         self.election_certs = {}
         # batch pool: pending batch ids awaiting proposal
@@ -134,11 +211,14 @@ role Chain:
 # in each action body throughout this model. See the comment in `ProposeBlock`
 # for the leader-check inlining pattern.
 
-action Init:
+atomic action Init:
     chain = Chain()
     validators = []
     for _ in range(N):
         validators.append(Validator())
+    # validator __id__ 0 is the sole Byzantine node (at most F=1)
+    # using a fixed assignment avoids a large nondeterministic fork at init
+    byz_nodes = set([0])
 
 always assertion QuorumSignerDistinct:
     # every formed certificate has at least QUORUM distinct voters
