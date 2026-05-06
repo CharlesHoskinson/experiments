@@ -3067,6 +3067,7 @@ name = "omega-network"
 version = "0.11.0"
 dependencies = [
  "ciborium",
+ "fail",
  "hex",
  "libp2p",
  "omega-mock-ledger",

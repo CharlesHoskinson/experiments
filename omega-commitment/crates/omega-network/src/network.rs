@@ -172,6 +172,11 @@ impl RaftNetwork<OmegaRaftTypeConfig> for LibP2pNetwork {
         rpc: AppendEntriesRequest<OmegaRaftTypeConfig>,
         option: RPCOption,
     ) -> Result<AppendEntriesResponse<u64>, RPCError<u64, BasicNode, RaftError<u64>>> {
+        #[cfg(feature = "failpoints")]
+        fail::fail_point!("omega_network::send_appendentries", |_| {
+            Err(rpc_error(OmegaNetworkError::OutboundClosed))
+        });
+
         match self
             .round_trip(RaftRpcRequest::AppendEntries(Box::new(rpc)), option)
             .await
