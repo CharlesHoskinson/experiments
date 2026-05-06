@@ -549,3 +549,12 @@ always assertion LeaderBarringRespected:
 # in the seeded happy-path scenario. The tracer was removed at Task 8 (this
 # commit). The seven real safety invariants above PASS over the same state
 # space that contains the non-vacuous chain.finalized witness.
+
+# M2 Task 6+8 evidence: the tracer assertion `ByzForkNeverReached_TRACER`
+# was added at Task 6 and ran with `chain.scenario == "byz_fork_height_2"`
+# AND `SEED_B2_F in chain.blocks` reached in a counterexample state —
+# confirming the byz-fork seed activates correctly. The tracer was removed
+# at Task 8 (this commit). The seven real safety invariants PASS over the
+# combined state space (both happy_path_three_chain and byz_fork_height_2
+# scenarios) — including non-vacuous proof that no path in the action
+# surface can build a quorum cert for S2_F or finalise it.
