@@ -63,6 +63,27 @@ role Validator:
             batch_id=batch,
         )
 
+    atomic action CastNotarizationVote:
+        bid = oneof list(chain.blocks.keys())
+        require bid != GENESIS
+        b = chain.blocks[bid]
+        # honest voters: refuse to vote if already voted at this (term, height),
+        # and only vote for blocks extending a locally-known notarized chain
+        # (parent has a known cert, or parent is GENESIS). Inlined helper:
+        # `extends_longest_notarized(b.id, self.known_certs)`.
+        if not self.byz:
+            require (b.term, b.height) not in self.voted_slots
+            require b.parent == GENESIS or b.parent in self.known_certs
+            require b.term <= self.term + 1
+        chain.notar_votes.add(record(
+            term=b.term,
+            height=b.height,
+            block_id=bid,
+            voter=self.__id__,
+        ))
+        if not self.byz:
+            self.voted_slots.add((b.term, b.height))
+
 # Global protocol state.
 role Chain:
     action Init:
