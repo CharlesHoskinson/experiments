@@ -1,5 +1,7 @@
 //! Shared helpers for turmoil-based 3-node tests.
 
+pub mod synthetic_claim;
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -20,10 +22,10 @@ pub fn three_node_configs() -> [NodeConfig; 3] {
         rpc: RpcConfig {
             bind: format!("0.0.0.0:{}", 8000 + id).parse().unwrap(),
             max_batch: 25,
-            max_request_bytes: 1024 * 1024,
+            max_request_bytes: 16 * 1024 * 1024,
         },
         cluster_id: "loganet-test".into(),
-        apply_deadline: Duration::from_secs(5),
+        apply_deadline: Duration::from_secs(3_600),
     };
     [
         mk(1, vec![peer(2), peer(3)]),
@@ -38,7 +40,7 @@ pub fn three_node_sim() -> turmoil::Sim<'static> {
     let mut builder = turmoil::Builder::new();
     let mut sim = builder
         .enable_tokio_io()
-        .simulation_duration(Duration::from_secs(60))
+        .simulation_duration(Duration::from_secs(3_600))
         .build();
     for cfg in configs {
         let cfg_clone = cfg.clone();

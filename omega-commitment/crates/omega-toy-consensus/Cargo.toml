@@ -34,6 +34,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+omega-claim-prover = { path = "../omega-claim-prover", features = ["test-fixtures"] }
 turmoil = { workspace = true }
 fail = { workspace = true }
 shuttle = { workspace = true }

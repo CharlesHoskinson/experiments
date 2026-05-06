@@ -3088,6 +3088,7 @@ dependencies = [
  "fail",
  "humantime-serde",
  "jsonrpsee",
+ "omega-claim-prover",
  "omega-claim-tx",
  "omega-mock-ledger",
  "omega-network",
