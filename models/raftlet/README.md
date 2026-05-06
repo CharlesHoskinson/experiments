@@ -77,16 +77,18 @@ Accepted counterexamples that mapped to Rust core requirements (per raftlet.md l
 
 Final M1 run: **17,281 valid nodes, 3,845 unique states, 17.8s, PASSED on all invariants** at `max_actions=7`.
 
-| Property class | Property | Status |
-|---|---|---|
-| Safety | `NoConflictingFinalised` | PASSED (vacuous — see depth caveat below) |
-| Safety | `PrefixConsistency` | PASSED (vacuous) |
-| Safety | `HonestVoteConsistency` | PASSED (non-vacuous; honest vote guards exercised) |
-| Safety | `QuorumSignerDistinct` | PASSED (vacuous; no certs form at depth 7) |
-| Safety | `LeaderBarringRespected` | PASSED (placeholder — relies on dynamic guard in `CastElectionVote`) |
-| Safety | `FinalityJustifiedByThreeChain` | PASSED (vacuous) |
-| Safety | `ForgedCertRejected` | PASSED (Byzantine forge action is a no-op; structural guard) |
-| Liveness | `EventuallyFinalise` | deferred to follow-up plan (see "Deferred work" below) |
+| Property class | Property | M1 status | M1.5 status |
+|---|---|---|---|
+| Safety | `NoConflictingFinalised` | vacuous PASS | **non-vacuous PASS** (S1 finalised in seeded happy-path) |
+| Safety | `PrefixConsistency` | vacuous PASS | **non-vacuous PASS** (S1 ∈ chain.finalized; pair-check exercised) |
+| Safety | `HonestVoteConsistency` | non-vacuous PASS | non-vacuous PASS (unchanged) |
+| Safety | `QuorumSignerDistinct` | vacuous PASS | **non-vacuous PASS** (3 seeded certs each with 3 voters) |
+| Safety | `LeaderBarringRespected` | placeholder | placeholder (still relies on dynamic guard in `CastElectionVote`) |
+| Safety | `FinalityJustifiedByThreeChain` | vacuous PASS | **non-vacuous PASS** (S1's three-chain S1→S2→S3 walked) |
+| Safety | `ForgedCertRejected` | structural | structural (still a no-op witness; M2 will exercise) |
+| Liveness | `EventuallyFinalise` | deferred | deferred (see "Deferred work" below) |
+
+**M1.5 final run:** 1,223 valid nodes / 203 unique states / 2s at `max_actions=2` with seeded happy-path scenario. PASSED on all seven safety invariants. The Task 7 tracer assertion (`return len(chain.finalized) <= 1`) was applied transiently and FAILED with a counterexample showing `chain.finalized = set(["G", "S1"])` — concrete proof that `FinalizeThreeChain` fires in a reachable state. Tracer removed at Task 8; documentary comment retained in `raftlet.fizz`.
 
 ### Depth caveat (M1 honest reporting)
 
@@ -103,6 +105,26 @@ Lifting the depth caveat requires one of:
 3. Symmetry annotations in the v0.4.0-correct API (the plan's `symmetry.nominal([...])` syntax does not match v0.4.0; see `raftlet.fizz` comment block).
 
 These are the natural targets for an M1.5 / M2 refinement.
+
+### M1.5 lift: seeded happy-path scenario
+
+M1.5 (branch `feat/raftlet-fizzbee-m1.5`, plan at `docs/superpowers/plans/2026-05-06-raftlet-fizzbee-m1.5-non-vacuous-finality.md`) added a seeded "happy-path three-chain" scenario in `Chain.Init` and `Validator.Init`. The seed pre-populates:
+
+- Three notarized blocks `S1`, `S2`, `S3` with consecutive (term, height) tuples `(1,1)`, `(2,2)`, `(3,3)` and parent links.
+- Notarization votes from honest validators 1, 2, 3 for each seeded block (9 votes total).
+- Quorum certs for all three seeded blocks.
+- Leader assignments `term -> {1: 1, 2: 2, 3: 3}`.
+- Each validator starts at `term=3` with `head=S3` and `known_certs={S1, S2, S3}`.
+
+This makes `FinalizeThreeChain` reachable in a single action: any validator with the seeded `known_certs` can pick `b1=S1, b2=S2, b3=S3` and add `S1` to `chain.finalized`. **Four** previously-vacuous invariants (`NoConflictingFinalised`, `PrefixConsistency`, `QuorumSignerDistinct`, `FinalityJustifiedByThreeChain`) are now exercised over states where `chain.finalized` contains real Raftlet-finalized blocks.
+
+**Trade-off:** the seeded scenario expanded the per-action choice multiplicity (CastNotarizationVote and ByzantineDoubleVote both now have 4× block choices). This forced `max_actions` down from M1's 7 to M1.5's 2 — but the seed is the lever, depth budget only needs to reach `FinalizeThreeChain` plus its consequence checks, which one extra action covers.
+
+**Still deferred (M2 targets):**
+
+- Byzantine equivocation execution (validator 0 attempts a competing fork). M2 plan will add a `byz_fork` scenario via top-level `oneof SCENARIO` selector.
+- Liveness properties.
+- Multiple seeded scenarios in one model run (state-space pressure).
 
 ### v0.4.0 limitations encountered (worth knowing for follow-up work)
 
