@@ -77,16 +77,16 @@ Accepted counterexamples that mapped to Rust core requirements (per raftlet.md l
 
 Final M1 run: **17,281 valid nodes, 3,845 unique states, 17.8s, PASSED on all invariants** at `max_actions=7`.
 
-| Property class | Property | M1 status | M1.5 status |
-|---|---|---|---|
-| Safety | `NoConflictingFinalised` | vacuous PASS | **non-vacuous PASS** (S1 finalised in seeded happy-path) |
-| Safety | `PrefixConsistency` | vacuous PASS | **non-vacuous PASS** (S1 ∈ chain.finalized; pair-check exercised) |
-| Safety | `HonestVoteConsistency` | non-vacuous PASS | non-vacuous PASS (unchanged) |
-| Safety | `QuorumSignerDistinct` | vacuous PASS | **non-vacuous PASS** (3 seeded certs each with 3 voters) |
-| Safety | `LeaderBarringRespected` | placeholder | placeholder (still relies on dynamic guard in `CastElectionVote`) |
-| Safety | `FinalityJustifiedByThreeChain` | vacuous PASS | **non-vacuous PASS** (S1's three-chain S1→S2→S3 walked) |
-| Safety | `ForgedCertRejected` | structural | structural (still a no-op witness; M2 will exercise) |
-| Liveness | `EventuallyFinalise` | deferred | deferred (see "Deferred work" below) |
+| Property class | Property | M1 | M1.5 | M2 |
+|---|---|---|---|---|
+| Safety | `NoConflictingFinalised` | vacuous PASS | non-vacuous (happy-path) | **non-vacuous (both scenarios)** — S2_F not finalised under byz-fork |
+| Safety | `PrefixConsistency` | vacuous PASS | non-vacuous (happy-path) | **non-vacuous (both scenarios)** |
+| Safety | `HonestVoteConsistency` | non-vacuous | non-vacuous | non-vacuous (unchanged) |
+| Safety | `QuorumSignerDistinct` | vacuous PASS | non-vacuous (happy-path) | **non-vacuous (both scenarios)** — S2_F never reaches QUORUM |
+| Safety | `LeaderBarringRespected` | placeholder | placeholder | placeholder (still relies on dynamic guard) |
+| Safety | `FinalityJustifiedByThreeChain` | vacuous PASS | non-vacuous (happy-path) | non-vacuous (happy-path, byz-fork has no finality candidate) |
+| Safety | `ForgedCertRejected` | structural | structural | **non-vacuous (byz-fork)** — TryForgeCertificate fires under real fork target without advancing finality |
+| Liveness | `EventuallyFinalise` | deferred | deferred | deferred (own plan) |
 
 **M1.5 final run:** 1,223 valid nodes / 203 unique states / 2s at `max_actions=2` with seeded happy-path scenario. PASSED on all seven safety invariants. The Task 7 tracer assertion (`return len(chain.finalized) <= 1`) was applied transiently and FAILED with a counterexample showing `chain.finalized = set(["G", "S1"])` — concrete proof that `FinalizeThreeChain` fires in a reachable state. Tracer removed at Task 8; documentary comment retained in `raftlet.fizz`.
 
@@ -125,6 +125,30 @@ This makes `FinalizeThreeChain` reachable in a single action: any validator with
 - Byzantine equivocation execution (validator 0 attempts a competing fork). M2 plan will add a `byz_fork` scenario via top-level `oneof SCENARIO` selector.
 - Liveness properties.
 - Multiple seeded scenarios in one model run (state-space pressure).
+
+### M2 lift: byz-fork scenario via multi-scenario `oneof`
+
+M2 (branch `feat/raftlet-fizzbee-m2`, plan at `docs/superpowers/plans/2026-05-06-raftlet-fizzbee-m2-byzantine-fork.md`) added a second seeded scenario `byz_fork_height_2` selected via `self.scenario = oneof [...]` at the top of `Chain.Init`. Under that scenario:
+
+- Byzantine validator 0 has authored `S2_F` — a competing block at `(term=2, height=2, parent=S1)` with `leader=0` and `batch_id="bz2"`.
+- One Byzantine vote for `S2_F` exists in `chain.notar_votes` (validator 0's own vote).
+- `S2_F` does NOT have a cert in the seed.
+- Honest validators 1, 2, 3 cannot cast a vote for `S2_F` because their `voted_slots` already contains `(2, 2)` from voting for the honest `S2` — the `HonestVoteConsistency` guard prevents the equivocation.
+
+The verification claim is that **no path through the model's action surface can build a quorum cert for `S2_F` nor finalise it**. The seven safety invariants PASS over the combined state space of both scenarios. Three properties newly become non-vacuous in M2:
+
+- `NoConflictingFinalised` is now exercised under a real fork attempt.
+- `QuorumSignerDistinct` rejects under-quorum certs against a tangible target.
+- `ForgedCertRejected` is no longer just structural — `TryForgeCertificate` fires inside a state where there's a competing uncertified block to attempt to certify.
+
+**Trade-off:** running both scenarios doubles Init breadth. State count grew from M1.5's 1,223 / 203 to M2's 2,807 / 526. Same `max_actions=2`.
+
+**Still deferred (post-M2 targets):**
+
+- Liveness via weak-fair scheduling. Genuinely independent from scenario design; gets its own plan.
+- Larger validator counts (`n=7, f=2`).
+- Real adversary modelling beyond static fork: dynamic vote injection, adaptive corruption.
+- Multi-step Byzantine strategies (e.g., bribe + fork + reorg).
 
 ### v0.4.0 limitations encountered (worth knowing for follow-up work)
 
