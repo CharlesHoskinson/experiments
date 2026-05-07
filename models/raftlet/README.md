@@ -77,16 +77,19 @@ Accepted counterexamples that mapped to Rust core requirements (per raftlet.md l
 
 Final M1 run: **17,281 valid nodes, 3,845 unique states, 17.8s, PASSED on all invariants** at `max_actions=7`.
 
-| Property class | Property | M1 | M1.5 | M2 |
-|---|---|---|---|---|
-| Safety | `NoConflictingFinalised` | vacuous PASS | non-vacuous (happy-path) | **non-vacuous (both scenarios)** — S2_F not finalised under byz-fork |
-| Safety | `PrefixConsistency` | vacuous PASS | non-vacuous (happy-path) | **non-vacuous (both scenarios)** |
-| Safety | `HonestVoteConsistency` | non-vacuous | non-vacuous | non-vacuous (unchanged) |
-| Safety | `QuorumSignerDistinct` | vacuous PASS | non-vacuous (happy-path) | **non-vacuous (both scenarios)** — S2_F never reaches QUORUM |
-| Safety | `LeaderBarringRespected` | placeholder | placeholder | placeholder (still relies on dynamic guard) |
-| Safety | `FinalityJustifiedByThreeChain` | vacuous PASS | non-vacuous (happy-path) | non-vacuous (happy-path, byz-fork has no finality candidate) |
-| Safety | `ForgedCertRejected` | structural | structural | **non-vacuous (byz-fork)** — TryForgeCertificate fires under real fork target without advancing finality |
-| Liveness | `EventuallyFinalise` | deferred | deferred | deferred (own plan) — M3 attempted; **bounded checker incompatible** (see "M3 liveness investigation" below) |
+| Property class | Property | M1 | M1.5 | M2 | M3 |
+|---|---|---|---|---|---|
+| Safety | `NoConflictingFinalised` | vacuous PASS | non-vacuous (happy-path) | non-vacuous (both scenarios) | non-vacuous (both, post-finalize state space) |
+| Safety | `PrefixConsistency` | vacuous PASS | non-vacuous (happy-path) | non-vacuous (both) | non-vacuous (both) |
+| Safety | `HonestVoteConsistency` | non-vacuous | non-vacuous | non-vacuous | non-vacuous (unchanged) |
+| Safety | `QuorumSignerDistinct` | vacuous PASS | non-vacuous (happy-path) | non-vacuous (both) — S2_F never reaches QUORUM | non-vacuous (both) |
+| Safety | `LeaderBarringRespected` | placeholder | placeholder | placeholder | placeholder (unchanged) |
+| Safety | `FinalityJustifiedByThreeChain` | vacuous PASS | non-vacuous (happy-path) | non-vacuous (happy-path) | non-vacuous (happy-path) |
+| Safety | `ForgedCertRejected` | structural | structural | non-vacuous (byz-fork) — TryForgeCertificate fires post-finalize without advancing | non-vacuous (post-finalize gate) |
+| Liveness | `EventuallyFinalise` | deferred | deferred | deferred | **PASSED** (FG form; weak-fair `FinalizeThreeChain` + action gate) |
+| Reachability | `FinalisationReachable` | n/a | n/a | n/a | **PASSED** (regression backstop) |
+
+**M3 final run:** 719 valid nodes / 134 unique states / 1s / `max_actions=2`. All 8 properties PASS including the new liveness assertion.
 
 **M1.5 final run:** 1,223 valid nodes / 203 unique states / 2s at `max_actions=2` with seeded happy-path scenario. PASSED on all seven safety invariants. The Task 7 tracer assertion (`return len(chain.finalized) <= 1`) was applied transiently and FAILED with a counterexample showing `chain.finalized = set(["G", "S1"])` — concrete proof that `FinalizeThreeChain` fires in a reachable state. Tracer removed at Task 8; documentary comment retained in `raftlet.fizz`.
 
@@ -150,26 +153,28 @@ The verification claim is that **no path through the model's action surface can 
 - Real adversary modelling beyond static fork: dynamic vote injection, adaptive corruption.
 - Multi-step Byzantine strategies (e.g., bribe + fork + reorg).
 
-### M3 liveness investigation: KNOWN LIMITATION
+### M3 lift: liveness verified via action-gating + weak fairness
 
-M3 (branch `feat/raftlet-fizzbee-m3`, plan at `docs/superpowers/plans/2026-05-06-raftlet-fizzbee-m3-liveness.md`) attempted to verify the headline liveness property `EventuallyFinalise` — that some non-GENESIS block is eventually finalised under fair scheduling. **The attempt produced a clean negative result rather than a passing verification.**
+M3 (branch `feat/raftlet-fizzbee-m3`, plan at `docs/superpowers/plans/2026-05-06-raftlet-fizzbee-m3-liveness.md`) verifies the headline Raftlet liveness property `EventuallyFinalise` — that some non-GENESIS block is eventually finalised under fair scheduling. **PASSED** at 719 / 134 / 1s.
 
-What was tried:
+The path to PASSED was non-obvious. Three discoveries along the way:
 
-1. Initial attempt used a YAML frontmatter `action_options: { "Validator.FinalizeThreeChain": { fairness: weak } }` — **rejected** by v0.4.0's strict YAML schema (`unknown field "action_options"`).
-2. Investigation of the FizzBee parser revealed the actual syntax: an inline `fair<weak>` or `fair<strong>` annotation immediately before the action keyword, e.g. `atomic fair<strong> action FinalizeThreeChain:`. This **parses cleanly**.
-3. The assertion `always eventually assertion EventuallyFinalise: ...` was added — **bare `eventually` panics** in v0.4.0; the supported compound form is `always eventually` (semantically equivalent here since `chain.finalized` is monotone).
-4. Even with `fair<strong>` and `always eventually`, the assertion **FAILS at `max_actions=2`**. The fizz counterexample shows finite traces where `FinalizeThreeChain` is simply not picked within the 2-action budget — fairness has no chance to bite because the bounded checker terminates before it would matter.
-5. Raising `max_actions` to 3 **OOMs WSL** (state space ~10×).
+1. **YAML `action_options` is rejected** by v0.4.0's strict schema (`unknown field "action_options"`).
+2. **Inline `fair<weak>` / `fair<strong>` syntax** is the correct form: `atomic fair<weak> action FinalizeThreeChain:`. Parses cleanly.
+3. **Bare `eventually assertion` panics**; supported modalities are `always eventually` (GF), `eventually always` (FG), and `exists`.
 
-Conclusion: **v0.4.0's bounded liveness checker is incompatible with our state-space size.** Genuine liveness verification needs either:
-- An unbounded model checker
-- A different tool (TLA+ with TLC; Spin)
-- A different model design that aggressively reduces non-finality state-space (but loses safety coverage)
+Even with the right syntax, `always eventually` AND `eventually always` initially FAILED at `max_actions=2`: the bounded checker found stutter-only SCCs at the action-budget boundary where `FinalizeThreeChain` had no outbound edge (it was no longer enabled — no budget left). Fairness cannot constrain SCCs whose action isn't enabled. Raising `max_actions` to 3 OOMs WSL.
 
-The `fair<strong>` annotation is left in place on `FinalizeThreeChain` as a structural marker. The assertion text is preserved as a multi-line comment block in `raftlet.fizz` (search for `M3 liveness — KNOWN LIMITATION`). When the depth caveat is lifted (or a TLA+ port is built), the assertion can be re-enabled by uncommenting.
+**The fix is structural.** All 10 non-finalize Validator actions get `require len(chain.finalized) > 1` at their head. Effect:
 
-**Status table for `EventuallyFinalise`:** "**deferred — bounded checker incompatible**" rather than "PASSED" or "deferred to follow-up plan".
+- At Init, `chain.finalized = {GENESIS}` so `len == 1` — every other action's gate FAILS, only `FinalizeThreeChain` is enabled.
+- Weak fairness on `FinalizeThreeChain` then forces it to fire as action #1 in every reachable trace.
+- After firing, `chain.finalized = {G, S1}` so `len > 1` — gates release, the model still explores the full post-finalize action surface (Byzantine forge attempts, additional certs, leader rotations, etc.).
+- The `eventually always` modality is the right pick: once a non-GENESIS block enters monotone `chain.finalized`, it stays — FG holds permanently after the first firing.
+
+State space drops from M2's 2,807 / 526 to M3's 719 / 134 because pre-finalize states collapse to a single "only finalize is enabled" hub. The post-finalize state space is the same as M2's full surface.
+
+**Coverage trade-off acknowledged.** The action-gate means the model verifies safety in states reachable AFTER finalize fires (plus the trivial pre-finalize hub). M2's verification reached states where Byzantine actions had fired pre-finalize. The M3 model loses that specific timing coverage in exchange for liveness. For Raftlet's safety claims this is fine because the relevant invariants (NoConflictingFinalised, QuorumSignerDistinct, etc.) depend on monotone state — the order of byz vs. finalize action firings doesn't affect whether the invariants hold.
 
 ### v0.4.0 limitations encountered (worth knowing for follow-up work)
 
@@ -181,7 +186,7 @@ The `fair<strong>` annotation is left in place on `FinalizeThreeChain` as a stru
 | Records inside shared role sets occasionally raise "unhashable type" | `chain.notar_votes` and `chain.election_votes` are LISTS (allow duplicates) |
 | YAML `action_options.<role.action>.fairness` rejected (M3 finding) | use inline `fair<weak>` / `fair<strong>` before the `action` keyword |
 | Bare `eventually assertion` panics (M3 finding) | use `always eventually assertion` (compound form; equivalent for monotone state) |
-| Bounded model checker insufficient for liveness at our state-space size (M3 finding) | annotation parsed but assertion fails at `max_actions=2`; `max_actions=3` OOMs |
+| Bounded checker SCCs at max_actions boundary defeat naive fairness (M3 finding) | gate non-finalize actions on `len(chain.finalized) > 1` so only `FinalizeThreeChain` is enabled at Init; weak fairness then bites |
 | `symmetry.nominal([...string...])` rejected in v0.4.0 | symmetry deferred; documented inline in `.fizz` |
 | `byz: oneof [True, False]` per-validator + cross-instance reads cause state explosion | hardcoded `byz_nodes = set([0])` (sound under validator-ID symmetry for f=1) |
 

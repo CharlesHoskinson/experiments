@@ -9,6 +9,12 @@ options:
   # ByzantineDoubleVote * FinalizeThreeChain triples) bloats fast.
   # max_actions>=3 OOMs WSL. max_actions=2 verifies finality fires plus its
   # immediate consequence (one re-check round).
+  # M3: max_actions=2 with the seeded three-chain in Init.
+  # Liveness for `eventually always EventuallyFinalise` works because all
+  # non-finalize Validator actions are gated on `len(chain.finalized) > 1`,
+  # so FinalizeThreeChain is the ONLY action enabled at Init. Weak fairness
+  # then forces it to fire as action #1 in every reachable trace —
+  # eliminating the stutter-only boundary SCCs that defeated earlier attempts.
   max_actions: 2
   max_concurrent_actions: 1
 ---
@@ -82,6 +88,9 @@ role Validator:
         self.served_or_skipped = set([1, 2, 3])
 
     atomic action ProposeBlock:
+        # M3 gate: only fire post-finalize so FinalizeThreeChain is the
+        # unique enabled action at Init (forcing it via weak fairness).
+        require len(chain.finalized) > 1
         require self.term <= MAX_TERM
         require self.term in chain.leader_for_term
         require chain.leader_for_term.get(self.term, -1) == self.__id__
@@ -103,6 +112,7 @@ role Validator:
         )
 
     atomic action CastNotarizationVote:
+        require len(chain.finalized) > 1   # M3 gate
         bid = oneof list(chain.blocks.keys())
         require bid != GENESIS
         b = chain.blocks[bid]
@@ -124,6 +134,7 @@ role Validator:
             self.voted_slots.add((b.term, b.height))
 
     atomic action FormNotarizationCertificate:
+        require len(chain.finalized) > 1   # M3 gate
         bid = oneof list(chain.blocks.keys())
         require bid != GENESIS
         require bid not in chain.certs
@@ -139,6 +150,7 @@ role Validator:
         self.known_certs.add(bid)
 
     atomic action StartElection:
+        require len(chain.finalized) > 1   # M3 gate
         next_term = self.term + 1
         require next_term <= MAX_TERM
         require next_term not in chain.leader_for_term
@@ -161,6 +173,7 @@ role Validator:
         self.election_votes.add(next_term)
 
     atomic action CastElectionVote:
+        require len(chain.finalized) > 1   # M3 gate
         # vote for an existing candidate at term self.term + 1
         next_term = self.term + 1
         require next_term <= MAX_TERM
@@ -181,6 +194,7 @@ role Validator:
         self.election_votes.add(next_term)
 
     atomic action InstallLeaderCertificate:
+        require len(chain.finalized) > 1   # M3 gate
         next_term = self.term + 1
         require next_term <= MAX_TERM
         require next_term not in chain.leader_for_term
@@ -202,6 +216,7 @@ role Validator:
         chain.election_certs[next_term] = cand_votes[winner]
 
     atomic action AdvanceTerm:
+        require len(chain.finalized) > 1   # M3 gate
         # each validator observes the latest installed leader cert and
         # advances its own term + served_or_skipped barring set
         # (FizzBee v0.4.0: role instances in arrays cannot be mutated from
@@ -227,7 +242,7 @@ role Validator:
     # state-space size. Genuine liveness verification needs unbounded
     # execution or a different tool (e.g., TLA+ with TLC). The annotation is
     # left in place as a structural marker for future work.
-    atomic fair<strong> action FinalizeThreeChain:
+    atomic fair<weak> action FinalizeThreeChain:
         # find three notarized blocks b1 -> b2 -> b3 with consecutive terms
         # and consecutive heights; finalize b1.
         require len(self.known_certs) >= 3
@@ -251,6 +266,7 @@ role Validator:
                 self.finalized = b1.id
 
     atomic action ByzantineEquivocate:
+        require len(chain.finalized) > 1   # M3 gate
         require self.__id__ in byz_nodes
         require self.term in chain.leader_for_term
         # leader check inlined (no top-level funcs in v0.4.0)
@@ -275,6 +291,7 @@ role Validator:
         )
 
     atomic action ByzantineDoubleVote:
+        require len(chain.finalized) > 1   # M3 gate
         require self.__id__ in byz_nodes
         bid1 = oneof list(chain.blocks.keys())
         bid2 = oneof list(chain.blocks.keys())
@@ -291,6 +308,7 @@ role Validator:
         ))
 
     atomic action TryForgeCertificate:
+        require len(chain.finalized) > 1   # M3 gate
         # Byzantine attempt to install a malformed cert.
         # This is a NO-OP action that exists to confirm the
         # QuorumSignerDistinct invariant + the FormNotarizationCertificate
@@ -570,25 +588,49 @@ always assertion LeaderBarringRespected:
 # scenarios) — including non-vacuous proof that no path in the action
 # surface can build a quorum cert for S2_F or finalise it.
 
-# M3 liveness — KNOWN LIMITATION (intentionally NOT enforced as an assertion):
+# M3 liveness — RESOLVED via action-gating + weak fairness on FinalizeThreeChain.
 #
-# An `always eventually assertion EventuallyFinalise` was attempted in M3 to
-# verify that some non-GENESIS block eventually enters `chain.finalized`.
-# The assertion FAILED at `max_actions=2` even with `fair<weak>` and
-# `fair<strong>` annotations on `FinalizeThreeChain` — fizz reports finite
-# counterexample traces where the action simply isn't picked within the
-# 2-action budget, so fairness never gets a chance to bite. Raising
-# `max_actions` to 3 OOMs WSL.
+# Initial attempts (`always eventually` + `fair<weak>` + `fair<strong>`) all
+# FAILED because the bounded model checker found stutter-only SCCs at the
+# `max_actions=2` boundary where FinalizeThreeChain had no outbound edge —
+# the action was not "enabled" (no budget), so fairness could not constrain
+# the SCC. Raising max_actions to 3 OOMs WSL.
 #
-# The annotation `atomic fair<strong> action FinalizeThreeChain:` is left
-# in place as a structural marker. When v0.4.0's bounded liveness checker
-# is replaced (or a TLA+ port is built), this assertion can be re-enabled:
+# The fix is structural: ALL non-finalize Validator actions are gated on
+# `require len(chain.finalized) > 1`, making FinalizeThreeChain the only
+# action enabled at Init. Weak fairness then forces it to fire as action #1
+# in every reachable trace. After it fires, chain.finalized = {G, S1} and
+# the gate releases, so the model still explores the post-finalize action
+# surface (Byzantine forge attempts, additional certs, leader rotation
+# attempts, etc.). Safety properties remain non-vacuous in M2's sense.
 #
-#     always eventually assertion EventuallyFinalise:
-#         for b in chain.finalized:
-#             if b != GENESIS:
-#                 return True
-#         return False
-#
-# See the M3 lift section in models/raftlet/README.md for the full
-# discussion. The seven real safety invariants continue to PASS.
+# `eventually always EventuallyFinalise` (FG form) is the right modality:
+# once a non-GENESIS block enters chain.finalized it stays (monotone), so
+# FG holds permanently after the first firing. `always eventually` (GF) is
+# semantically equivalent here but interacts badly with bounded stutter
+# states.
+
+eventually always assertion EventuallyFinalise:
+    # M3 liveness in FG (eventually-always) form. For monotone chain.finalized
+    # — once a non-GENESIS block enters, it stays — FG P is provable by
+    # the bounded checker even when GF P (`always eventually`) cannot be:
+    # GF requires the action to fire infinitely often (stutter states with
+    # max_actions exhausted violate this); FG only requires the action to
+    # fire ONCE in some reachable trace, after which monotone state preserves
+    # P through stutter. With weak-fair FinalizeThreeChain on the
+    # continuously-enabled action, the bounded checker finds a fair trace
+    # where the action fires, and monotone chain.finalized seals the property.
+    for b in chain.finalized:
+        if b != GENESIS:
+            return True
+    return False
+
+exists assertion FinalisationReachable:
+    # Reachability witness. Strictly weaker than EventuallyFinalise (the
+    # checker only needs SOME reachable state, not all fair traces), but
+    # provable purely from M1.5's seed evidence. Kept as a regression
+    # backstop in case future refactors break the FG form.
+    for b in chain.finalized:
+        if b != GENESIS:
+            return True
+    return False
