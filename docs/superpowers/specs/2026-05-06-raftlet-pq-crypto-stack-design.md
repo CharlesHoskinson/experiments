@@ -15,13 +15,13 @@ The Raftlet implementation needs an end-to-end set of cryptographic primitives. 
 |---|---|---|
 | **Hot-path signature** | **ML-DSA-65** via `libcrux-ml-dsa ≥0.0.4`, exposed behind a `RaftletSig` trait in `raftlet-crypto` | NIST FIPS 204 finalized. Level 3 (~AES-192) is the only defensible choice for a chain that aspires to multi-decade forge resistance. Sig 3,309 B; pk 1,952 B. ~3,000–10,000 signs/sec/core in portable Rust. |
 | **Cert composition (in-protocol)** | **Concatenated ML-DSA-65 sigs** with a Merkle root commitment over `(voter_id, sig_bytes)` leaves. Full sigs gossiped during cert formation; canonical chain stores root + voter set. | Same scheme as hot path — primitive monogamy. ~16 KB cert at n=4 (worst case 7 voters → ~23 KB). The 12 KB savings from Falcon-512 isn't worth doubling the audit surface. |
-| **Cert composition (off-chain / light-client / bridge)** | **SNARK-wrapped aggregation.** A separate aggregator role reads the concat cert and emits a Plonky3 proof (Groth16 wrapped → ~260 B; PLONK wrapped → ~1 KB) of "I have 2f+1 valid ML-DSA-65 sigs over `(term, height, block_id)`". This is a SECOND cert form, not a replacement. | Hot-path consensus stays non-interactive (validators don't run MPC). Light clients and the Omega T6/T7 bridge consume the wrapped proof. Pending QA validation on production-readiness; see §"SNARK-wrap caveats" below. |
+| **Cert composition (off-chain / light-client / bridge)** | **DEFERRED to "track" status — not in v0.1 or v0.2.** The concat cert IS the cert; light clients and bridges verify ML-DSA-65 sigs directly until a PQ-sound SNARK-aggregation library matures. See §"SNARK-wrap caveats" for the QA findings that triggered this deferral. | The Groth16 / PLONK outer wrap uses BN254 pairings — *curve-based, not post-quantum-sound*. A quantum adversary could forge the wrapper without breaking inner ML-DSA. For a chain marketing PQ security, this is a logical inconsistency. The PQ-native alternative (LaBRADOR via Nethermind's `condor-rs`) is archived; Algorand's 3-year-pending Groth16 layer remains unshipped. |
 | **Hash (protocol layer)** | **BLAKE3** (`blake3` v1.x), keyed mode for MACs and transcript binding, derive-key mode for KDFs | 6–8 GB/s on commodity x86_64. 119M downloads, 1,091 dependents (Solana, IPFS, OpenZFS). No formal audit, but the most-deployed Rust hash. |
 | **Hash (STARK circuit)** | **Poseidon2 over BabyBear**, width 8 (compression) and width 12 (sponge), HALF_FULL_ROUNDS=4, PARTIAL_ROUNDS=22 | Matches existing omega-commitment parameters; reuses the same hash AIR. Active cryptanalysis on reduced-round instances (ePrint 2025/954, 937, 1916; 2026/150) — full-round unbroken. Pre-design Keccak-AIR fallback. |
 | **Block-id construction** | `BLAKE3-XOF(domain_sep ‖ canonical_block_bytes)` → 512 bits | Hedges Grover's algorithm: 256-bit output gives only ~128-bit PQ pre-image resistance under conservative analyses. 512-bit hedges to 256-bit PQ for long-lived chain-internal references. |
 | **KES (forward-security)** | **TPM-anchored software KES.** Software impl in `raftlet-kes` (HSS/LMS or XMSS-MT — see §"KES variant choice"); TPM provides epoch rollback protection via NV counter, sealed state, and epoch-key certification. See §"TPM-Assisted KES Architecture". | Resolves the v0.1 forward-security gap WITHOUT requiring an audited from-scratch Rust XMSS-MT (which is 6-12 months critical-path). TPM protects against the dominant statefulness hazard (leaf reuse after crash + restore). |
 | **VRF** | **Punt entirely from Raftlet.** Raftlet's leader election is vote-based (per the FizzBee model). | A VRF is an Omega/Crypsinous concern, not a Raftlet concern. Designing now creates premature coupling. |
-| **Cold-path / governance threshold** | **Dealer-MPC at keygen + plain threshold-of-N signing** for v0.1; **interactive threshold MPC at signing time (Hermine)** for v0.2 | The v0.1 form: a one-time MPC at key generation distributes shares; each governance vote uses normal ML-DSA-65 signed by `t` of `n` shareholders, concatenated. v0.2 upgrades to per-vote interactive MPC once Hermine matures. The v0.1 form trades selectively-aborting-coordinator risk for protocol simplicity. |
+| **Cold-path / governance threshold** | **Dealer-MPC at keygen + plain threshold-of-N signing** for v0.1; **interactive threshold MPC at signing time (Hermine)** for v0.2 | The v0.1 form: a one-time MPC at key generation distributes Shamir shares of an ML-DSA-65 key. Each governance vote uses standard `ml-dsa` (RustCrypto, production-quality) signed by `t` of `n` shareholders, concatenated. The thin coordinator transport layer is custom Rust we'd write. v0.2 upgrades to per-vote interactive MPC once Hermine (ePrint 2026/419) matures with a public Rust impl. The `lattice-safe/threshold-ml-dsa` crate exists today (ML-DSA-44 only, 0 stars, patent-claimed via NIST TCall) but is not v0.1-shippable. **Name collision warning:** Cardano's `input-output-hk/mithril` repo is unrelated to the ePrint 2026/013 "Mithril" threshold ML-DSA scheme — Cardano's Mithril is BLS-adjacent STM multi-sigs, no PQ threshold code. |
 | **HSM strategy (governance only)** | **AWS KMS ML-DSA** as the v0.1 primary. Add Thales Luna v7.9 once its FIPS 140-3 PQC cert lands. **YubiHSM is excluded** — no public PQ roadmap. | AWS KMS is FIPS 140-3 Level 3 certified for ML-DSA since June 2025. HSMs protect governance roots only — not the hot path (latency mismatch). |
 | **TPM strategy (per-validator)** | **Required for KES rollback protection.** Validators run on hardware with a TPM 2.0 (Windows: CNG/Platform Crypto Provider + TBS; Linux: tpm2-tss). | TPM is per-validator hardware that anchors KES state. Distinct from HSM (which is a centralized cloud / network appliance for governance). |
 | **Ceremony** | **No trusted-setup ceremony for v0.1.** Genesis = deterministic build of validator pubkey set + ML-DSA-signed bootstrap manifest, attested via independent reproducible builds + Sigsum-style transparency log. | Lattice signatures need no Powers-of-Tau SRS. The right pattern is reproducible-build attestation + transparency log, not Sapling-style PoT. |
@@ -150,25 +150,40 @@ raftlet-core
 
 **Boundary discipline.** `raftlet-core` (the protocol engine — the FizzBee model translated to Rust) verifies signatures and certificates but never talks to a TPM. `raftlet-tpm` only helps a local validator protect and attest its signing state. This makes the verifier code portable (light clients, browser verifiers, non-TPM hardware) while still letting validators leverage hardware anchoring.
 
-## SNARK-wrap caveats (the second cert form)
+## SNARK-wrap caveats — DEFERRED beyond v0.2
 
-The off-chain aggregator role uses Plonky3 (which the Omega program already runs for omega-commitment) to prove that 2f+1 ML-DSA-65 signatures verify against the same `(term, height, block_id)` transcript. The proof is recursively wrapped to Groth16 (~260 B) or PLONK (~1 KB) for cheap on-chain verification.
+Three parallel QA research agents converged on the same conclusion: SNARK-wrapped PQ certificate aggregation is **not viable for Raftlet at any near-term version**, despite the surface appeal of small light-client proofs.
 
-The protocol stays non-interactive at the validator-signing layer — this is NOT MPC. Validators sign individually as today. The aggregator is a separate role; in the simplest design, any party that can collect 2f+1 sigs from gossip can produce the wrapped proof. The Omega bridge layer (T6/T7) is the natural consumer.
+### Three independent reasons
 
-**What we explicitly DO NOT do:**
+**1. The outer wrapper is not post-quantum sound.** The shippable end-to-end path today is SP1 + `sp1-ntt-gadget` + Groth16 wrap. Groth16 verifies via BN254 pairings — curve-based, broken by Shor's algorithm. The inner ML-DSA-65 stays PQ-secure, but a quantum adversary can forge the *wrapper* without touching the signatures. For a chain marketing PQ security as a foundational property, shipping a "compact light-client cert" that has a quantum-vulnerable verification surface is a logical inconsistency. PLONK wrap has the same problem. Risc0 in STARK-only mode preserves PQ soundness but produces ~200 KB receipts, defeating the on-chain-verifiability goal.
 
-- We don't replace the in-protocol cert with the wrapped proof. The protocol layer keeps the concat cert. The wrapped proof is a derivative artifact published alongside.
-- We don't run interactive MPC on the consensus hot path.
-- We don't use the wrapped proof for in-validator verification — full validators verify the concat cert directly.
+**2. Latency is far past any threshold.** The live demo (`kota1026/pq-wallet-sp1-ntt-gadget-`) measures **22.07 seconds for ONE ML-DSA verify** with $0.045/proof on SP1 Network. Five sigs: 60–120s on a single GPU, 30–60s on the SP1 Network prover cluster. The spec's prior threshold (10s) is missed by a wide margin even for off-chain async use. NTT precompile work could bring a 5–10× speedup, but no such precompile exists in any production zkVM in 2026.
 
-**What this costs:**
+**3. The PQ-native alternative is dead code.** LaBRADOR (CRYPTO 2024, ePrint 2024/1352) is a lattice-based SNARK with transparent setup and Module-SIS hardness — the right cryptographic shape for aggregating PQ signatures into a small-and-PQ-sound proof. The only Rust implementation, Nethermind's `condor-rs`, was **archived May 4, 2026** (read-only, no longer maintained, 22 stars). Until LaBRADOR-equivalent code returns to active maintenance OR gets a fresh production-quality re-implementation, there is no PQ-native lattice-aggregation path.
 
-- Audit surface expands: ML-DSA-65 (already in audit plan) + Plonky3 hash AIR (already in audit plan) + ML-DSA verification AIR (new) + Groth16 wrapper (new).
-- Operational role: the aggregator is a new component in the deployment topology. Acceptable if it's permissionless (anyone can produce proofs from public gossip), risky if it's centralized.
-- Proving latency: real numbers pending QA research. If proving takes single-digit seconds on commodity hardware, this is a v0.1 deliverable. If it takes minutes or requires GPU clusters, defer to v0.2.
+External evidence: Algorand's planned Groth16 wrap on top of their Falcon state proofs has been *future work since 2022* and remains unshipped in mid-2026. That's the clearest signal in the ecosystem about the engineering risk.
 
-**v0.1 vs v0.2 inclusion is conditional on QA findings.** If the QA pass returns showing SP1 / Plonky3 production maturity for ML-DSA verification with sub-10s proving on commodity hardware, ship in v0.1. Otherwise defer to v0.2 (testnet for v0.1; light clients verify the concat cert directly for the first cycle).
+### What this means for Raftlet
+
+- The protocol-layer cert is **the cert**. Concat ML-DSA-65 sigs (~16 KB at n=4, ~23 KB at n=7) is what flows on the wire.
+- Light clients verify ML-DSA-65 directly. ML-DSA verification is ~50 µs per sig on commodity hardware; verifying 5 sigs in 250 µs is not a performance problem, just a bandwidth one.
+- The Omega T6/T7 bridge layer downstream of Raftlet has the same constraint: until LaBRADOR (or equivalent) ships, bridge claims either accept the bandwidth cost OR accept a non-PQ-sound wrapper as a "PQ-secure-by-the-time-it-matters" caveat. That decision belongs to the bridge spec, not Raftlet's.
+
+### Tracking list (revisit when these change)
+
+| Signal | What we'd watch for | Source |
+|---|---|---|
+| LaBRADOR-revival | Active maintained Rust impl with audit; or fresh fork of `condor-rs` | https://github.com/NethermindEth/condor-rs (archived) |
+| Algorand Groth16 wrap ships | Open-source circuit; production deployment | https://dev.algorand.co/concepts/protocol/state-proofs/ |
+| SP1 / Plonky3 NTT precompile | Bringing ML-DSA verify under 5s | https://github.com/succinctlabs/sp1 |
+| New PQ-native SNARK toolkit | Anything in the Module-SIS / lattice-VOLE family with production Rust | n/a |
+
+If any of these flips before v0.1 ship, re-evaluate. Until then, the concat cert is the durable answer.
+
+### What we keep from the original SNARK-wrap proposal
+
+The *separate aggregator role* idea (a non-interactive component that consumes the concat cert and produces a derivative artifact) is still valid — just with a different output. v0.2 may add the aggregator producing **larger non-wrapped Risc0 STARK receipts** (~200 KB, but PQ-sound throughout) for use cases where a single artifact is preferable to N concatenated sigs. This is much less risky than the Groth16 wrap and stays consistent with the PQ-throughout architecture goal.
 
 ## Trade-offs accepted
 
@@ -181,7 +196,7 @@ The protocol stays non-interactive at the validator-signing layer — this is NO
 7. **Reduced-round Poseidon2 cryptanalysis pressure.** Active research; full-round unbroken; Keccak-AIR fallback pre-designed.
 8. **AWS KMS lock-in for v0.1 governance HSM.** Single vendor for cold-path is a SPOF. v0.2 adds Thales Luna multi-vendor.
 9. **Notar certs are concat at v0.1, not threshold.** Validator certs do not use interactive MPC. Cert size cost (~16 KB) is the trade vs the protocol simplicity of independent signing. v0.2 path to Hermine threshold ML-DSA tracked.
-10. **SNARK-wrap conditional on QA findings.** If Plonky3 / SP1 ML-DSA verification proving exceeds ~10s on commodity hardware in mid-2026 measurements, the wrapped-proof cert form ships in v0.2 (not v0.1). Light clients verify the concat cert directly during the v0.1 → v0.2 gap.
+10. **No SNARK-wrap in v0.1 OR v0.2.** Three QA pass findings (BN254-pairing PQ-soundness violation, 22s+ proving latency, abandoned LaBRADOR) converged on deferring SNARK-wrap to a "track" status. Light clients verify the concat cert directly. v0.2 may add a Risc0 STARK-only aggregator (~200 KB, PQ-sound) but not a Groth16-wrapped one. See §"SNARK-wrap caveats" for the full reasoning.
 
 ## Questions the user must answer
 
@@ -227,10 +242,10 @@ Critical-path crates to audit, in priority order:
 | 4 | `blake3` (Rust) | Less critical (mature, deployed) but no formal audit. Scope: Rust-specific impl, not BLAKE3 spec | $40–60k targeted | Before v0.1; bundle with #1 |
 | 5 | Raftlet's own `RaftletSig` adapter + transcript domain separation | Glue is where bugs hide. Domain-separation strings, canonical encoding, vote-replay guards, voter-id binding | $50–80k | Before v0.1 |
 | 6 | Plonky3 Poseidon2 width-8/12 BabyBear | Constraint correctness vs reference impl; lookup-arg soundness | $60–100k | Before any STARK that touches consensus state |
-| 6b | ML-DSA-65 verification AIR (in Plonky3 or SP1) — only if SNARK-wrap ships in v0.1 | Constraint correctness vs FIPS 204 verify spec; signature-validity soundness; recursion to Groth16 | $80–150k | Before v0.1 mainnet IF SNARK-wrap is in v0.1; otherwise before v0.2 |
+| 6b | ML-DSA-65 verification AIR — DEFERRED. Removed from v0.1 audit envelope per QA findings. | Will return to scope only if Risc0 STARK-only aggregator ships in v0.2 (~$80–150k) or LaBRADOR-equivalent matures (different audit shape). | — | Tracked, not scheduled |
 | 7 | Hermine impl (when one exists) | Threshold ML-DSA correctness + abort-resilience | $150k+ | Before v0.2 governance |
 
-**Total v0.1 audit envelope:** ~$350–530k (crypto + KES + TPM + glue + BLAKE3). **+$80–150k if SNARK-wrap ships in v0.1**. **v0.2 envelope:** ~$200k+ (Poseidon2 + Hermine + (SNARK-wrap if deferred)).
+**Total v0.1 audit envelope:** ~$350–530k (crypto + KES + TPM + glue + BLAKE3). **v0.2 envelope:** ~$200k+ (Poseidon2 + Hermine). SNARK-wrap is no longer scheduled for either; revisit only if the tracking signals in §"SNARK-wrap caveats" flip.
 
 If the budget isn't there, the honest call is: **don't ship to mainnet at v0.1**. Run testnet only with a published "unaudited cryptography" warning, and use the testnet duration to fund the audit.
 
