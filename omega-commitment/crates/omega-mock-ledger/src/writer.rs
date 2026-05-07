@@ -36,15 +36,23 @@ use tokio::sync::{mpsc, oneshot};
 use crate::storage::{LedgerResponse, OmegaRaftEntry};
 use crate::{schema, sqlite_i64, starstream_utxo_id, LedgerError};
 
+/// Bounded writer-actor channel capacity.
+///
+/// Sized for a 3-node cluster's apply traffic plus short-term JSON-RPC
+/// bursts. A saturated queue applies backpressure on the caller; combined
+/// with the JSON-RPC apply deadline this prevents an unbounded-mpsc OOM
+/// surface under client flooding.
+pub(crate) const WRITER_CHANNEL_CAPACITY: usize = 256;
+
 #[derive(Clone)]
 pub(crate) struct WriterHandle {
-    tx: mpsc::UnboundedSender<WriteCmd>,
+    tx: mpsc::Sender<WriteCmd>,
 }
 
 impl WriterHandle {
     pub(crate) fn start(path: PathBuf) -> Result<Self, LedgerError> {
         let conn = schema::open_initialized(&path)?;
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(WRITER_CHANNEL_CAPACITY);
         thread::Builder::new()
             .name("omega-mock-ledger-writer".to_string())
             .spawn(move || run_writer(path, conn, rx))
@@ -66,6 +74,7 @@ impl WriterHandle {
                 claim,
                 reply,
             })))
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -74,6 +83,7 @@ impl WriterHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriteCmd::CheckpointWalTruncate { reply })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -82,6 +92,7 @@ impl WriterHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriteCmd::Snapshot { snapshot_id, reply })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -93,6 +104,7 @@ impl WriterHandle {
                 snapshot_path,
                 reply,
             })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -111,6 +123,7 @@ impl WriterHandle {
                 block_idx,
                 reply,
             })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -123,6 +136,7 @@ impl WriterHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriteCmd::SaveRaftMeta { key, value, reply })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -131,6 +145,7 @@ impl WriterHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriteCmd::AppendRaftLogs { rows, reply })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -139,6 +154,7 @@ impl WriterHandle {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriteCmd::DeleteRaftLogsSince { log_idx, reply })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -155,6 +171,7 @@ impl WriterHandle {
                 last_purged,
                 reply,
             })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -171,6 +188,7 @@ impl WriterHandle {
                 last_membership,
                 reply,
             })
+            .await
             .map_err(|_| LedgerError::WriterClosed)?;
         rx.await.map_err(|_| LedgerError::WriterReplyCanceled)?
     }
@@ -233,7 +251,7 @@ struct ApplyClaimCmd {
     reply: oneshot::Sender<Result<(), LedgerError>>,
 }
 
-fn run_writer(path: PathBuf, mut conn: Connection, mut rx: mpsc::UnboundedReceiver<WriteCmd>) {
+fn run_writer(path: PathBuf, mut conn: Connection, mut rx: mpsc::Receiver<WriteCmd>) {
     while let Some(cmd) = rx.blocking_recv() {
         match cmd {
             WriteCmd::ApplyClaim(cmd) => {

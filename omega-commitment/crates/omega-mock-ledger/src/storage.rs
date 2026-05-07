@@ -489,16 +489,46 @@ impl RaftSnapshotBuilder<OmegaRaftTypeConfig> for MockLedgerStorage {
     }
 }
 
+/// Maximum CBOR payload accepted by [`decode`] before deserialisation.
+///
+/// 64 MiB sized for v0.1 mock-ledger snapshot payloads on a developer
+/// laptop. Anything larger is rejected before ciborium allocates, which
+/// closes the `Vec::with_capacity(huge_advertised_len)` preallocation
+/// surface flagged in PR #7 review item N7-H2. Mirrors the cap used by
+/// `omega_network::rpc::decode_cbor`.
+const MAX_STORAGE_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+
+/// Maximum nesting depth accepted by [`decode`].
+///
+/// CBOR's recursive decoder will overflow the OS thread stack on deeply
+/// nested arrays/maps. 64 levels is far beyond any openraft RPC type or the
+/// snapshot frame enum.
+const MAX_STORAGE_RECURSION: usize = 64;
+
 #[allow(clippy::result_large_err)]
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, StorageError<u64>> {
     let mut bytes = Vec::new();
     ciborium::into_writer(value, &mut bytes).map_err(sto_write)?;
+    if bytes.len() > MAX_STORAGE_PAYLOAD_BYTES {
+        return Err(sto_write(format!(
+            "storage payload too large: {} > {}",
+            bytes.len(),
+            MAX_STORAGE_PAYLOAD_BYTES
+        )));
+    }
     Ok(bytes)
 }
 
 #[allow(clippy::result_large_err)]
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StorageError<u64>> {
-    ciborium::from_reader(bytes).map_err(sto_read)
+    if bytes.len() > MAX_STORAGE_PAYLOAD_BYTES {
+        return Err(sto_read(format!(
+            "storage payload too large: {} > {}",
+            bytes.len(),
+            MAX_STORAGE_PAYLOAD_BYTES
+        )));
+    }
+    ciborium::de::from_reader_with_recursion_limit(bytes, MAX_STORAGE_RECURSION).map_err(sto_read)
 }
 
 #[allow(clippy::result_large_err)]
