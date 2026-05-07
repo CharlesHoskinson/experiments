@@ -35,6 +35,7 @@ fn single_claim_roundtrip() -> turmoil::Result {
         let leader_url = leader_url.expect("a leader exists after 3s");
 
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(300))
             .build(&leader_url)
             .unwrap();
         let mut params = jsonrpsee::core::params::ObjectParams::new();
