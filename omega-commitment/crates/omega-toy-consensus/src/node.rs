@@ -76,6 +76,7 @@ impl Node {
     /// locking errors, RPC bind errors, and malformed static node
     /// configuration.
     pub async fn start(config: NodeConfig) -> Result<NodeHandle, ConsensusError> {
+        validate_config(&config)?;
         let ledger = Arc::new(omega_mock_ledger::MockLedger::open(&config.data_dir)?);
         let storage = omega_mock_ledger::MockLedgerStorage::new((*ledger).clone());
         let (log_store, state_machine) = storage.openraft_parts();
@@ -241,6 +242,45 @@ impl NodeHandle {
             .map_err(|error| ConsensusError::Raft(error.to_string()))?;
         Ok(())
     }
+}
+
+/// Validates a [`NodeConfig`] before bring-up.
+///
+/// Closes two PR #7-review classes of operator misconfiguration:
+///
+/// - **N7-M1** — The spec says LoganNet v0.1 binds JSON-RPC localhost-only
+///   ("no TLS, no auth, no rate limiting"). A non-loopback bind would expose
+///   an unauthenticated write-RPC to the network. Reject anything not bound
+///   to a loopback address with [`ConsensusError::Config`].
+/// - **P0-C1** — In v0.1 the in-process raft dispatcher routes only within a
+///   single OS process via `RAFT_REGISTRY`. Multi-process bring-up via
+///   `--peer ...` cannot form a quorum because each process has its own
+///   registry. Bring-up emits a loud `tracing::warn!` whenever `peers` is
+///   non-empty, naming the limitation; it does not abort because the
+///   in-process supported path (`examples/three_node_local.rs` and the
+///   integration tests) brings up 3 nodes from one process and they all
+///   carry non-empty `peers`. The libp2p inbound actor lands in Group 2.
+fn validate_config(config: &NodeConfig) -> Result<(), ConsensusError> {
+    if !config.rpc.bind.ip().is_loopback() {
+        return Err(ConsensusError::Config(format!(
+            "rpc.bind must be a loopback address in v0.1 (got {}); the v0.1 JSON-RPC \
+             surface is unauthenticated and the spec forbids non-loopback bind. \
+             Bind to 127.0.0.1 or ::1.",
+            config.rpc.bind
+        )));
+    }
+    if !config.peers.is_empty() {
+        tracing::warn!(
+            node_id = config.node_id,
+            peer_count = config.peers.len(),
+            "v0.1 LoganNet uses an in-process raft dispatcher; cross-process raft \
+             RPCs to peers in another OS process are silently dropped. The supported \
+             multi-node path is a single-process example or integration test where \
+             all node handles share the in-process RAFT_REGISTRY. Multi-process \
+             bring-up requires the libp2p inbound actor (Group 2)."
+        );
+    }
+    Ok(())
 }
 
 fn should_initialize_cluster(config: &NodeConfig, raft: &Raft) -> bool {

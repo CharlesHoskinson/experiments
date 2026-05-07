@@ -192,10 +192,18 @@ impl OmegaRpcServer for OmegaRpcImpl {
             _ => NodeRole::Follower,
         };
 
-        let last_log_id = metrics
-            .last_log_index
-            .zip(Some(metrics.current_term))
-            .map(|(index, term)| LogIdView { term, index });
+        // Source `term` + `index` from `last_applied`'s `LogId` so they refer
+        // to the same entry. The previous version paired `last_log_index`
+        // with `current_term`, which advances on every election even when
+        // the local last log entry was written under a prior term —
+        // producing a wrong `last_log_id.term` after a leader change.
+        // (PR #7 review item P1-C2.)  In a healthy cluster the apply index
+        // trails the log end by at most one heartbeat; this is the index
+        // clients use for deduping anyway.
+        let last_log_id = metrics.last_applied.map(|log_id| LogIdView {
+            term: log_id.committed_leader_id().get_term(),
+            index: log_id.index,
+        });
 
         let nullifier_count = inner
             .ledger

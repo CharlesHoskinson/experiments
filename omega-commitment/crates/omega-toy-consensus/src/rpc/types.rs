@@ -5,17 +5,27 @@ use serde::{Deserialize, Serialize};
 
 /// Outcome of a single `omega_submitClaim` call.
 ///
-/// `accepted = true` means `applied_index = Some(idx)` and
-/// `reject_reason = None`. `accepted = false` means `applied_index = None`
-/// and `reject_reason` names the rejection class.
+/// `accepted = true` ⇒ the claim was applied to the state machine; the
+/// nullifier and Starstream UTxO are durable; `applied_index` carries the
+/// raft log index at which the apply committed; `reject_reason = None`.
+///
+/// `accepted = false` ⇒ raft committed the entry but the state machine
+/// rejected the apply (the log index advanced, but no ledger mutation
+/// happened); `applied_index` carries the index of the committed-but-rejected
+/// entry (useful for client-side deduping and ordering); `reject_reason`
+/// names the class as one of `"verify"` / `"invalid"` / `"replay"` /
+/// `"internal"`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Clone)]
 pub struct SubmitOutcome {
     /// Whether the claim was applied to the state machine.
     pub accepted: bool,
-    /// Raft log index at which the apply occurred, when `accepted`.
+    /// Raft log index at which the apply-or-reject decision committed.
+    /// Always `Some(_)` for any outcome that returns this struct (only
+    /// pre-commit failures like `−32000 NotLeader` / `−32004 WriterClosed`
+    /// / `−32005 Timeout` come back as JSON-RPC errors instead).
     pub applied_index: Option<u64>,
     /// Reject reason, when `!accepted`. One of `"verify"`, `"invalid"`,
-    /// `"replay"`.
+    /// `"replay"`, `"internal"`.
     pub reject_reason: Option<String>,
 }
 

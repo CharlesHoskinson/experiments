@@ -104,18 +104,25 @@ impl NodeConfig {
     /// Returns [`ConsensusError::Config`](crate::ConsensusError::Config) if
     /// `node_id` is 0 (openraft requires non-zero).
     pub fn single_node_localhost(node_id: u64) -> Result<Self, crate::ConsensusError> {
+        use std::net::{Ipv4Addr, SocketAddr};
+
         if node_id == 0 {
             return Err(crate::ConsensusError::Config(
                 "node_id must be non-zero".into(),
             ));
         }
+        let port: u16 = (8000_u32 + u32::try_from(node_id).map_err(|_| {
+            crate::ConsensusError::Config("node_id exceeds u32".into())
+        })?)
+            .try_into()
+            .map_err(|_| crate::ConsensusError::Config("rpc port exceeds u16".into()))?;
         Ok(Self {
             node_id,
             data_dir: std::env::temp_dir().join(format!("omega-toy-consensus-{node_id}")),
             libp2p_listen: format!("/ip4/127.0.0.1/tcp/{}", 4000 + node_id),
             peers: Vec::new(),
             rpc: RpcConfig {
-                bind: format!("127.0.0.1:{}", 8000 + node_id).parse().unwrap(),
+                bind: SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
                 max_batch: 25,
                 max_request_bytes: 1024 * 1024,
             },
