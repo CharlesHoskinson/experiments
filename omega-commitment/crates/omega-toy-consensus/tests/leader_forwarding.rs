@@ -19,6 +19,7 @@ fn submit_to_follower_returns_neg_32000_with_url() -> turmoil::Result {
         for node in ["node1", "node2", "node3"] {
             let url = format!("http://127.0.0.1:800{}", &node[4..]);
             let client = jsonrpsee::http_client::HttpClientBuilder::default()
+                .request_timeout(Duration::from_secs(300))
                 .build(&url)
                 .unwrap();
             let state: omega_toy_consensus::NodeState = client
@@ -38,6 +39,7 @@ fn submit_to_follower_returns_neg_32000_with_url() -> turmoil::Result {
         let follower_url = follower_url.expect("a follower exists after 3s");
 
         let follower = jsonrpsee::http_client::HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(300))
             .build(&follower_url)
             .unwrap();
         let mut params = jsonrpsee::core::params::ObjectParams::new();
@@ -59,6 +61,7 @@ fn submit_to_follower_returns_neg_32000_with_url() -> turmoil::Result {
         assert_eq!(hint_url, leader_url);
 
         let leader = jsonrpsee::http_client::HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(300))
             .build(&hint_url)
             .unwrap();
         let mut params = jsonrpsee::core::params::ObjectParams::new();
