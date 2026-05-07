@@ -58,6 +58,7 @@ async fn submit(
     claim: ClaimTx,
 ) -> Result<omega_toy_consensus::SubmitOutcome, ClientError> {
     let client = jsonrpsee::http_client::HttpClientBuilder::default()
+        .request_timeout(Duration::from_secs(300))
         .build(node_url(node_id))
         .unwrap();
     let mut params = jsonrpsee::core::params::ObjectParams::new();
