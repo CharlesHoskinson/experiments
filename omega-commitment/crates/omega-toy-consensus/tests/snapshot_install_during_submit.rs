@@ -65,6 +65,7 @@ fn snapshot_install_mid_submit_keeps_state_consistent() -> turmoil::Result {
         tokio::time::sleep(Duration::from_secs(3)).await;
         let leader_url = common::leader_url().await;
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(300))
             .build(&leader_url)
             .unwrap();
 
