@@ -5,7 +5,7 @@
 //! into the `-32000..-32005` JSON-RPC error code space.
 
 use jsonrpsee::types::ErrorObjectOwned;
-use omega_mock_ledger::{LedgerError, OmegaRaftTypeConfig};
+use omega_mock_ledger::LedgerError;
 use openraft::error::{ClientWriteError, ForwardToLeader};
 
 use crate::rpc::error;
@@ -73,7 +73,3 @@ pub fn translate_ledger_error(err: LedgerError) -> ErrorObjectOwned {
         ),
     }
 }
-
-/// Type alias to keep `OmegaRaftTypeConfig` paths short in callers.
-#[allow(dead_code)]
-pub(crate) type RaftCfg = OmegaRaftTypeConfig;

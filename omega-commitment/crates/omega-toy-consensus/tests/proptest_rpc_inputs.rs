@@ -28,9 +28,13 @@ fn with_proof_bytes(mut claim: ClaimTx, payload: Vec<u8>) -> ClaimTx {
 }
 
 fn documented_code(code: i32) -> bool {
+    // -32603 is reachable via openraft `Fatal` and the membership-change
+    // collapse path in `routing::translate_client_write_error`; include it
+    // in the allowlist so a randomly-malformed input that reaches that
+    // path does not flake the proptest. See spec § "Error code map".
     matches!(
         code,
-        -32600 | -32602 | -32001 | -32002 | -32003 | -32004 | -32005
+        -32600 | -32602 | -32603 | -32001 | -32002 | -32003 | -32004 | -32005
     )
 }
 

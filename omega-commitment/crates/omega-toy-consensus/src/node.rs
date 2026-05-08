@@ -38,6 +38,21 @@ fn raft_link_blocks() -> &'static Mutex<BTreeSet<(u64, u64)>> {
 pub struct Node;
 
 /// Handle for graceful shutdown of a running [`Node`].
+///
+/// Owns the JSON-RPC server, the in-process raft network dispatcher
+/// task, the runtime task, and the `Raft` instance. The handle's `Drop`
+/// does NOT shut anything down — callers must invoke
+/// [`NodeHandle::shutdown`] for an orderly stop. Dropping without
+/// calling `shutdown` leaks the server task and the dispatcher task,
+/// and leaves the node registered in the in-process raft dispatcher
+/// (`RAFT_REGISTRY`), where peer nodes will continue to dispatch raft
+/// RPCs to its dropped `Raft` clone — this is intentional for tests
+/// that crash a node and observe the cluster's reaction.
+///
+/// `shutdown` order matters: stop new RPC traffic, unregister from the
+/// in-process raft dispatcher, abort the network task, signal the
+/// runtime task, then shut down openraft. Reversing any of those steps
+/// would let an in-flight client_write reach a dropped writer actor.
 pub struct NodeHandle {
     node_id: u64,
     shutdown_tx: oneshot::Sender<()>,
@@ -327,12 +342,14 @@ fn route_raft(node_id: u64) -> Option<Raft> {
         .and_then(|registry| registry.get(&node_id).cloned())
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn clear_raft_link_blocks_for_test() {
     if let Ok(mut blocks) = raft_link_blocks().lock() {
         blocks.clear();
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn partition_raft_link_for_test(a: u64, b: u64) {
     if let Ok(mut blocks) = raft_link_blocks().lock() {
         blocks.insert((a, b));

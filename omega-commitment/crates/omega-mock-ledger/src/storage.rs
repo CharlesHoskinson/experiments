@@ -80,8 +80,15 @@ pub struct LedgerResponse {
     /// Whether the command mutated ledger state.
     pub accepted: bool,
     /// Structured rejection class when `accepted` is false.
+    ///
+    /// `#[serde(default)]` so that an old wire format without this
+    /// field decodes cleanly to `None` — preserves forward
+    /// compatibility for any responses persisted before the
+    /// `LedgerReject` enum landed.
+    #[serde(default)]
     pub reject: Option<LedgerReject>,
     /// Rejection text when `accepted` is false.
+    #[serde(default)]
     pub error: Option<String>,
 }
 

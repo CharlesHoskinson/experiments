@@ -3,6 +3,17 @@
 //! State space: pre_state in {empty, populated, mid-restore} and snapshot in
 //! {valid, malformed}. Property: a valid snapshot installs its claimed index;
 //! a malformed snapshot rejects.
+//!
+//! NOTE — STRUCTURAL PLACEHOLDER: The `install_snapshot` function below is
+//! a self-contained toy state machine. It does NOT call
+//! `omega_mock_ledger::MockLedger::restore_snapshot` or the openraft
+//! snapshot install path. Kani will report `VERIFICATION:- SUCCESSFUL`
+//! because `f(x) == match-arm-of-x` is a tautology by construction. This
+//! harness exists to wire the kani gate, not to bind verification of the
+//! actual snapshot install code; replacing it with a real harness is
+//! Group 3 work. See
+//! `cardano-wiki/wiki/pages/loganet-roadmap.md` § "Toy verification
+//! harnesses".
 
 #![cfg(feature = "kani")]
 #![no_main]

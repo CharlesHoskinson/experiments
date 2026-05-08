@@ -15,6 +15,12 @@ pub fn three_node_configs() -> [NodeConfig; 3] {
 }
 
 /// Builds a 3-node LoganNet config triple with a custom apply deadline.
+///
+/// `rpc.bind` uses `127.0.0.1` (loopback) so the v0.1 loopback-enforcement
+/// in `validate_config` accepts the bring-up. The `libp2p_listen` and
+/// `libp2p_addr` strings remain `/ip4/0.0.0.0/...` for compatibility with
+/// the libp2p factory's listen-on-all-interfaces convention; the in-process
+/// raft dispatcher does not actually bind libp2p in v0.1.
 pub fn three_node_configs_with_deadline(apply_deadline: Duration) -> [NodeConfig; 3] {
     let peer = |id: u64| PeerConfig {
         node_id: id,
@@ -27,7 +33,7 @@ pub fn three_node_configs_with_deadline(apply_deadline: Duration) -> [NodeConfig
         libp2p_listen: format!("/ip4/0.0.0.0/tcp/{}", 4000 + id),
         peers,
         rpc: RpcConfig {
-            bind: format!("0.0.0.0:{}", 8000 + id).parse().unwrap(),
+            bind: format!("127.0.0.1:{}", 8000 + id).parse().unwrap(),
             max_batch: 25,
             max_request_bytes: 16 * 1024 * 1024,
         },

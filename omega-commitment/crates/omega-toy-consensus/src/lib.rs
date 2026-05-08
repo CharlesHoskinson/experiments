@@ -19,6 +19,7 @@
 //! [1]: ../../../docs/superpowers/specs/2026-05-05-omega-toy-consensus-design.md
 //! [2]: ../../../cardano-wiki/wiki/pages/loganet-roadmap.md
 //! [3]: ../../../openspec/changes/add-proof-experiment-harness/
+//! [4]: ../../examples/three_node_local.rs
 //!
 //! # Tier of trust
 //!
@@ -30,12 +31,21 @@
 //!
 //! # v0.1 limitations
 //!
-//! - Localhost-only RPC (`127.0.0.1:800N`); no TLS, no auth, no rate limiting.
+//! - Localhost-only RPC (`127.0.0.1:800N`); loopback bind enforced; no TLS,
+//!   no auth, no rate limiting.
 //! - Two RPC methods only: `omega_submitClaim`, `omega_getState`.
 //! - HTTP only; WebSocket subscriptions land with `omega-api` (Goblins).
 //! - No membership change; static `--peer` topology.
+//! - **Raft RPC is in-process.** `--peer <id>,<libp2p_addr>,<rpc_url>` is
+//!   recorded for leader-hint resolution and openraft's membership table
+//!   only; the `libp2p_addr` is not wired into raft RPC at v0.1. Three
+//!   independent `omega-toy-consensus run` processes cannot form a cluster
+//!   — only [`examples/three_node_local`][4] does, by spawning three nodes
+//!   inside one tokio runtime.
 //! - No mDNS / Kademlia discovery.
 //! - Windows + 1.95.0 toolchain only; Linux/macOS CI deferred to Group 2.
+//! - Toy Kani + Shuttle harnesses (see [`loganet-roadmap`][2] §
+//!   "Toy verification harnesses").
 //! - See [`loganet-roadmap`][2] for the full deferral table.
 //!
 //! # Conventions
@@ -58,6 +68,13 @@ pub mod routing;
 pub mod rpc;
 
 /// Test controls for the in-process raft dispatcher.
+///
+/// Gated behind the `test-support` feature so that production callers
+/// cannot accidentally induce raft link blocks on a running node. The
+/// crate's own integration tests get this feature via the self-dep in
+/// `[dev-dependencies]`. Do not enable `test-support` from production
+/// crates.
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support {
     /// Clears all dispatcher link blocks.

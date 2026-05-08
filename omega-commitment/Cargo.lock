@@ -3094,6 +3094,7 @@ dependencies = [
  "omega-claim-tx",
  "omega-mock-ledger",
  "omega-network",
+ "omega-toy-consensus",
  "openraft",
  "proptest",
  "schemars 0.8.22",

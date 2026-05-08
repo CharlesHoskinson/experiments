@@ -111,11 +111,11 @@ impl NodeConfig {
                 "node_id must be non-zero".into(),
             ));
         }
-        let port: u16 = (8000_u32 + u32::try_from(node_id).map_err(|_| {
-            crate::ConsensusError::Config("node_id exceeds u32".into())
-        })?)
-            .try_into()
-            .map_err(|_| crate::ConsensusError::Config("rpc port exceeds u16".into()))?;
+        let port: u16 = (8000_u32
+            + u32::try_from(node_id)
+                .map_err(|_| crate::ConsensusError::Config("node_id exceeds u32".into()))?)
+        .try_into()
+        .map_err(|_| crate::ConsensusError::Config("rpc port exceeds u16".into()))?;
         Ok(Self {
             node_id,
             data_dir: std::env::temp_dir().join(format!("omega-toy-consensus-{node_id}")),

@@ -1,4 +1,13 @@
-//! Failpoint test for replayed stale vote responses.
+//! Failpoint test for term monotonicity under replayed stale vote responses.
+//!
+//! NOTE: This test asserts only that the observed term on node 1 does
+//! not regress while the `omega_network::receive_vote_replay` failpoint
+//! is active. It does NOT verify that any RPC returns `-32003 Replay`
+//! (the orchestrator excerpt's "Nullifier replay translation" row is
+//! covered by `tests/routing.rs::ledger_replay_emits_neg_32003_with_hint`,
+//! a unit test on the translator). Strengthening to a full byzantine
+//! replay rejection test is Group 3 work — see
+//! `cardano-wiki/wiki/pages/loganet-roadmap.md` § "Group 3".
 
 #![cfg(feature = "failpoints")]
 
@@ -32,8 +41,11 @@ async fn observed_term(node_id: u64) -> u64 {
         .unwrap_or(0)
 }
 
+/// Term on node 1 is monotonic (`>=`) across a 2-second window with the
+/// `omega_network::receive_vote_replay` failpoint active. This is a
+/// safety smoke, not a binding rejection test — see the module doc.
 #[test]
-fn replayed_old_vote_does_not_regress_term() -> turmoil::Result {
+fn term_monotonic_under_vote_replay_failpoint() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {

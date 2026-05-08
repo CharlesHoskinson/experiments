@@ -62,6 +62,9 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run(args: RunArgs) -> anyhow::Result<()> {
+    if args.node_id == 0 {
+        anyhow::bail!("--node_id must be non-zero (openraft requires non-zero NodeId)");
+    }
     let config = NodeConfig {
         node_id: args.node_id,
         data_dir: args.data_dir,

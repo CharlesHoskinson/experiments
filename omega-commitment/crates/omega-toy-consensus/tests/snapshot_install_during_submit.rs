@@ -1,4 +1,13 @@
-//! Turmoil test for submit consistency across a snapshot window.
+//! Turmoil test for submit consistency across an elapsed-time window.
+//!
+//! NOTE: This test does NOT trigger an `install_snapshot` RPC; v0.1 has
+//! no public snapshot trigger and the elapsed `sleep` window does not
+//! force openraft to take a snapshot. The test asserts only that three
+//! sequential submits commit and replicate. Group 2 / Group 3 will
+//! replace this with a real snapshot-install integration test once an
+//! RPC-level snapshot trigger lands. See
+//! `cardano-wiki/wiki/pages/loganet-roadmap.md` § "Group 1" — last
+//! "out of scope" bullet.
 
 mod common;
 
@@ -52,8 +61,12 @@ async fn wait_counts_match(expected_nullifiers: u64, expected_utxos: u64) {
     panic!("node counts did not converge: {observed:?}");
 }
 
+/// Three sequential submits commit and replicate across a multi-second
+/// elapsed window. Renamed from `snapshot_install_mid_submit_keeps_state_consistent`
+/// to acknowledge that no snapshot install is exercised in v0.1 — the
+/// elapsed window does not force openraft to take or install a snapshot.
 #[test]
-fn snapshot_install_mid_submit_keeps_state_consistent() -> turmoil::Result {
+fn three_submits_across_elapsed_window_replicate_to_all_nodes() -> turmoil::Result {
     let warmups = [
         common::synthetic_claim::synthetic_accepted_claim_for_leaf(0),
         common::synthetic_claim::synthetic_accepted_claim_for_leaf(1),

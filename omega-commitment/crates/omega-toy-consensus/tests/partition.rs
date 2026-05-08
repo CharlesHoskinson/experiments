@@ -98,8 +98,15 @@ fn partitioned_minority_does_not_commit() -> turmoil::Result {
     sim.run()
 }
 
+/// Leader commits a claim while one follower's HTTP transport (turmoil)
+/// is partitioned from the other two. Renamed from
+/// `partitioned_majority_continues_to_commit` to acknowledge that this
+/// test partitions ONLY the turmoil HTTP layer, not the in-process raft
+/// dispatcher (`RAFT_REGISTRY` / `RAFT_LINK_BLOCKS`). A real raft-RPC
+/// majority partition test needs the libp2p inbound actor — see
+/// `cardano-wiki/wiki/pages/loganet-roadmap.md` § "Group 3".
 #[test]
-fn partitioned_majority_continues_to_commit() -> turmoil::Result {
+fn majority_with_http_partition_continues_to_commit() -> turmoil::Result {
     let _guard = TEST_LOCK.lock().unwrap();
     let claim = common::synthetic_claim::synthetic_accepted_claim_for_leaf(99);
     let mut sim = common::three_node_sim();
