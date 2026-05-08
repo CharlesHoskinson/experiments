@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 default = []
 cardano-tx-validation = ["dep:pallas-validate"]
+failpoints = ["dep:fail", "fail/failpoints"]
 
 [dependencies]
 omega-claim-tx = { path = "../omega-claim-tx" }
@@ -17,6 +18,8 @@ omega-commitment-core = { path = "../omega-commitment-core" }
 omega-claim-prover = { path = "../omega-claim-prover" }
 
 hex.workspace = true
+ciborium.workspace = true
+fail = { workspace = true, optional = true }
 num_cpus.workspace = true
 openraft.workspace = true
 pallas-validate = { workspace = true, optional = true }

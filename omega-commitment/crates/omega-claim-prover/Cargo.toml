@@ -38,6 +38,10 @@ criterion.workspace = true
 omega-commitment-core = { path = "../omega-commitment-core" }
 omega-claim-verifier = { path = "../omega-claim-verifier" }
 
+[features]
+default = []
+test-fixtures = []
+
 [[bench]]
 name = "bench_prove_p50"
 harness = false

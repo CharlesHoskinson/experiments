@@ -8,8 +8,9 @@ use std::io::Cursor;
 use std::ops::{Bound, RangeBounds};
 use std::path::PathBuf;
 
-use omega_claim_prover::OmegaCommitment;
-use omega_claim_tx::ClaimTx;
+use omega_claim_prover::{OmegaCommitment, ProofEnvelope};
+use omega_claim_tx::{ClaimTx, ProofBytes};
+use omega_claim_verifier::VerifyError;
 use openraft::storage::Adaptor;
 use openraft::{
     EntryPayload, ErrorSubject, ErrorVerb, LogId, LogState, RaftLogReader, RaftSnapshotBuilder,
@@ -44,13 +45,66 @@ pub struct LedgerCommand {
     pub claim: ClaimTx,
 }
 
+impl LedgerCommand {
+    /// Builds a replicated apply command from a submitted claim transaction.
+    ///
+    /// The JSON-RPC Group 1 surface accepts `ClaimTx` directly. The proof
+    /// envelope inside the claim carries the published commitment, so this
+    /// constructor extracts that commitment before the command enters raft.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::LedgerError::Verify`] when the claim's proof bytes do
+    /// not decode as a proof envelope.
+    pub fn apply_claim(claim: ClaimTx) -> Result<Self, crate::LedgerError> {
+        let envelope: ProofEnvelope = postcard::from_bytes(&claim_proof(&claim).0)
+            .map_err(|_| crate::LedgerError::Verify(VerifyError::InvalidProof))?;
+        Ok(Self {
+            block_idx: 0,
+            commitment: envelope.commitment,
+            claim,
+        })
+    }
+}
+
+fn claim_proof(claim: &ClaimTx) -> &ProofBytes {
+    match claim {
+        ClaimTx::Utxo(claim) => &claim.proof,
+        ClaimTx::Collection(claim) => &claim.proof,
+    }
+}
+
 /// Response returned after a replicated ledger command is applied.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerResponse {
     /// Whether the command mutated ledger state.
     pub accepted: bool,
+    /// Structured rejection class when `accepted` is false.
+    ///
+    /// `#[serde(default)]` so that an old wire format without this
+    /// field decodes cleanly to `None` — preserves forward
+    /// compatibility for any responses persisted before the
+    /// `LedgerReject` enum landed.
+    #[serde(default)]
+    pub reject: Option<LedgerReject>,
     /// Rejection text when `accepted` is false.
+    #[serde(default)]
     pub error: Option<String>,
+}
+
+/// Serializable rejection class returned through raft apply responses.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum LedgerReject {
+    /// The proof verifier rejected the claim.
+    Verify,
+    /// The claim envelope was internally inconsistent.
+    InvalidClaim,
+    /// The claim reused an already-applied nullifier.
+    Replay,
+    /// The writer actor closed while applying the command.
+    WriterClosed,
+    /// Any other ledger-side failure.
+    Internal,
 }
 
 impl LedgerResponse {
@@ -58,15 +112,26 @@ impl LedgerResponse {
     pub fn accepted() -> Self {
         Self {
             accepted: true,
+            reject: None,
             error: None,
         }
     }
 
     /// Builds a rejected apply response with a displayable reason.
-    pub fn rejected(error: String) -> Self {
+    pub fn rejected(error: crate::LedgerError) -> Self {
+        let reject = match &error {
+            crate::LedgerError::Verify(_) => LedgerReject::Verify,
+            crate::LedgerError::InvalidClaim(_) => LedgerReject::InvalidClaim,
+            crate::LedgerError::Replay { .. } => LedgerReject::Replay,
+            crate::LedgerError::WriterClosed | crate::LedgerError::WriterReplyCanceled => {
+                LedgerReject::WriterClosed
+            }
+            _ => LedgerReject::Internal,
+        };
         Self {
             accepted: false,
-            error: Some(error),
+            reject: Some(reject),
+            error: Some(error.to_string()),
         }
     }
 }
@@ -431,14 +496,46 @@ impl RaftSnapshotBuilder<OmegaRaftTypeConfig> for MockLedgerStorage {
     }
 }
 
+/// Maximum CBOR payload accepted by [`decode`] before deserialisation.
+///
+/// 64 MiB sized for v0.1 mock-ledger snapshot payloads on a developer
+/// laptop. Anything larger is rejected before ciborium allocates, which
+/// closes the `Vec::with_capacity(huge_advertised_len)` preallocation
+/// surface flagged in PR #7 review item N7-H2. Mirrors the cap used by
+/// `omega_network::rpc::decode_cbor`.
+const MAX_STORAGE_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+
+/// Maximum nesting depth accepted by [`decode`].
+///
+/// CBOR's recursive decoder will overflow the OS thread stack on deeply
+/// nested arrays/maps. 64 levels is far beyond any openraft RPC type or the
+/// snapshot frame enum.
+const MAX_STORAGE_RECURSION: usize = 64;
+
 #[allow(clippy::result_large_err)]
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, StorageError<u64>> {
-    postcard::to_allocvec(value).map_err(sto_write)
+    let mut bytes = Vec::new();
+    ciborium::into_writer(value, &mut bytes).map_err(sto_write)?;
+    if bytes.len() > MAX_STORAGE_PAYLOAD_BYTES {
+        return Err(sto_write(format!(
+            "storage payload too large: {} > {}",
+            bytes.len(),
+            MAX_STORAGE_PAYLOAD_BYTES
+        )));
+    }
+    Ok(bytes)
 }
 
 #[allow(clippy::result_large_err)]
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StorageError<u64>> {
-    postcard::from_bytes(bytes).map_err(sto_read)
+    if bytes.len() > MAX_STORAGE_PAYLOAD_BYTES {
+        return Err(sto_read(format!(
+            "storage payload too large: {} > {}",
+            bytes.len(),
+            MAX_STORAGE_PAYLOAD_BYTES
+        )));
+    }
+    ciborium::de::from_reader_with_recursion_limit(bytes, MAX_STORAGE_RECURSION).map_err(sto_read)
 }
 
 #[allow(clippy::result_large_err)]

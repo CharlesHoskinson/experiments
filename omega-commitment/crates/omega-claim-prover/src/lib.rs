@@ -69,6 +69,9 @@
 
 mod blake3_trace;
 
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod test_fixtures;
+
 use blake3_trace::{
     build_blake3_trace, hash_from_words, leaf_compression, node_compressions, B3_BLOCK_LEN_OFFSET,
     B3_CHAINING_VALUES_OFFSET, B3_COUNTER_HI_OFFSET, B3_COUNTER_LOW_OFFSET, B3_FLAGS_OFFSET,

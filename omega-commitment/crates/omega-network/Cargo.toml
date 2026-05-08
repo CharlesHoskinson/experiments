@@ -6,10 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+failpoints = ["dep:fail", "fail/failpoints"]
+
 [dependencies]
 omega-mock-ledger = { path = "../omega-mock-ledger" }
 
 ciborium.workspace = true
+fail = { workspace = true, optional = true }
 hex.workspace = true
 libp2p.workspace = true
 openraft.workspace = true

@@ -78,7 +78,9 @@ use writer::WriterHandle;
 
 type ReaderPool = Pool<SqliteConnectionManager>;
 
-pub use storage::{LedgerCommand, LedgerResponse, MockLedgerStorage, OmegaRaftTypeConfig};
+pub use storage::{
+    LedgerCommand, LedgerReject, LedgerResponse, MockLedgerStorage, OmegaRaftTypeConfig,
+};
 
 /// Errors returned by the mock-ledger storage and apply surfaces.
 ///

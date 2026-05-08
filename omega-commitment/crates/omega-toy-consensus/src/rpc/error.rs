@@ -1,0 +1,165 @@
+//! JSON-RPC application error code constants and constructors.
+//!
+//! See spec `docs/superpowers/specs/2026-05-05-omega-toy-consensus-design.md`
+//! section "Error code map (JSON-RPC application range)" for the contract.
+//! The same table also appears in
+//! `cardano-wiki/wiki/pages/loganet-roadmap.md` § "Error code map".
+
+use jsonrpsee::types::ErrorObjectOwned;
+use serde::Serialize;
+
+/// `-32000` - non-leader; `data` carries leader hint.
+pub const CODE_NOT_LEADER: i32 = -32000;
+/// `-32001` - proof verification failed.
+pub const CODE_VERIFY: i32 = -32001;
+/// `-32002` - CBOR decode / structural failure.
+pub const CODE_INVALID_CLAIM: i32 = -32002;
+/// `-32003` - nullifier already present.
+pub const CODE_REPLAY: i32 = -32003;
+/// `-32004` - writer actor unavailable (transient).
+pub const CODE_WRITER_CLOSED: i32 = -32004;
+/// `-32005` - apply did not complete in deadline.
+pub const CODE_TIMEOUT: i32 = -32005;
+
+/// Hint sent in `data` for `-32000 NotLeader`.
+#[derive(Debug, Serialize)]
+pub struct NotLeaderHint {
+    /// Leader's u64 id, when openraft knows it.
+    pub leader_id: Option<u64>,
+    /// Public RPC URL of the leader, when this node knows it.
+    pub leader_rpc_url: Option<String>,
+}
+
+/// Builds a `-32000 NotLeader` error.
+///
+/// # Soundness
+///
+/// Preserves: leader forwarding stays stateless. This server does not proxy
+/// writes and only reports the leader id and RPC URL it currently knows.
+///
+/// Closes: a follower cannot silently forward a client write after leadership
+/// has moved.
+///
+/// Fails on: the hinted URL is not proven to still be leader by the time a
+/// client retries; clients must treat absent or stale hints as "leader
+/// unknown" and retry against any peer.
+pub fn not_leader(leader_id: Option<u64>, leader_rpc_url: Option<String>) -> ErrorObjectOwned {
+    let hint = serde_json::json!({
+        "leader_id": leader_id,
+        "leader_rpc_url": leader_rpc_url,
+    });
+    ErrorObjectOwned::owned(CODE_NOT_LEADER, "not leader", Some(hint))
+}
+
+/// Builds a `-32001 Verify` error.
+///
+/// # Soundness
+///
+/// Preserves: verifier failures stay distinguishable from infrastructure
+/// failures. Clients can treat `-32001` as "the proof did not satisfy the
+/// verifier" — non-retryable until the proof is rebuilt.
+///
+/// Closes: a forged or malformed proof cannot be rebranded as a transient
+/// `-32004` retryable failure.
+///
+/// Fails on: the `verify_error` string is human-facing; do not parse it.
+pub fn verify(detail: impl Into<String>) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        CODE_VERIFY,
+        "proof verification failed",
+        Some(serde_json::json!({ "verify_error": detail.into() })),
+    )
+}
+
+/// Builds a `-32002 InvalidClaim` error.
+///
+/// # Soundness
+///
+/// Preserves: structural / decode rejection stays distinguishable from
+/// verifier rejection (`-32001`) and replay (`-32003`). A `ClaimTx` whose
+/// proof envelope cannot be parsed never reaches the writer actor.
+///
+/// Closes: a malformed claim cannot mutate state; the JSON-RPC boundary
+/// is the rejection point.
+///
+/// Fails on: the `detail` string is human-facing; do not parse it.
+pub fn invalid_claim(detail: impl Into<String>) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        CODE_INVALID_CLAIM,
+        "invalid claim",
+        Some(serde_json::json!({ "detail": detail.into() })),
+    )
+}
+
+/// Builds a `-32003 Replay` error.
+///
+/// # Soundness
+///
+/// Preserves: nullifier replays stay distinguishable from other ledger
+/// rejections. The `(sub_tree_id, leaf_index)` pair points the client at
+/// the existing leaf so a replay-aware client can dedupe rather than
+/// retry.
+///
+/// Closes: a replayed nullifier cannot insert a duplicate ledger row;
+/// the writer actor's verify-before-mutate invariant catches this even
+/// when the verifier accepts the proof.
+///
+/// Fails on: the existing-leaf hint is informational; clients must not
+/// assume the hint maps to a specific tx history.
+pub fn replay(sub_tree_id: u32, leaf_index: u64) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        CODE_REPLAY,
+        "claim replays an existing nullifier",
+        Some(serde_json::json!({
+            "sub_tree_id": sub_tree_id,
+            "leaf_index": leaf_index,
+        })),
+    )
+}
+
+/// Builds a `-32004 WriterClosed` error.
+///
+/// # Soundness
+///
+/// Preserves: writer-actor unavailability stays a transient signal. The
+/// `retryable: true` flag tells clients the apply did not happen and a
+/// retry against the same node is expected to succeed once the actor is
+/// back.
+///
+/// Closes: a closed writer cannot leave partial state behind that a
+/// subsequent retry would double-apply; this code is only emitted when no
+/// writer transaction was opened.
+///
+/// Fails on: this code is also emitted when the writer-channel oneshot
+/// reply is dropped after the actor accepted the request — clients must
+/// treat that as "outcome unknown, retry only if the operation is
+/// idempotent at the application layer".
+pub fn writer_closed() -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        CODE_WRITER_CLOSED,
+        "writer actor unavailable",
+        Some(serde_json::json!({ "retryable": true })),
+    )
+}
+
+/// Builds a `-32005 Timeout` error.
+///
+/// # Soundness
+///
+/// Preserves: apply-deadline elapse stays distinguishable from outright
+/// rejection. The deadline applies to the whole `Raft::client_write` call
+/// — replication, commit, and apply.
+///
+/// Closes: a slow leader or a stuck apply cannot manifest as a silent
+/// hang on the client; the deadline forces a structured signal.
+///
+/// Fails on: the underlying raft entry may have been committed and
+/// applied after the deadline elapsed; clients must treat `-32005` as
+/// "outcome unknown" and either query state or retry idempotently.
+pub fn timeout(deadline_ms: u32) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(
+        CODE_TIMEOUT,
+        "apply deadline elapsed",
+        Some(serde_json::json!({ "deadline_ms": deadline_ms })),
+    )
+}

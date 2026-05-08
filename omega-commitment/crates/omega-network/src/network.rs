@@ -26,6 +26,8 @@ use openraft::raft::{
     VoteRequest, VoteResponse,
 };
 use openraft::BasicNode;
+#[cfg(feature = "failpoints")]
+use openraft::Vote;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::rpc::{decode_cbor, encode_cbor, OmegaNetworkError, RaftRpcRequest, RaftRpcResponse};
@@ -172,6 +174,11 @@ impl RaftNetwork<OmegaRaftTypeConfig> for LibP2pNetwork {
         rpc: AppendEntriesRequest<OmegaRaftTypeConfig>,
         option: RPCOption,
     ) -> Result<AppendEntriesResponse<u64>, RPCError<u64, BasicNode, RaftError<u64>>> {
+        #[cfg(feature = "failpoints")]
+        fail::fail_point!("omega_network::send_appendentries", |_| {
+            Err(rpc_error(OmegaNetworkError::OutboundClosed))
+        });
+
         match self
             .round_trip(RaftRpcRequest::AppendEntries(Box::new(rpc)), option)
             .await
@@ -211,6 +218,16 @@ impl RaftNetwork<OmegaRaftTypeConfig> for LibP2pNetwork {
         rpc: VoteRequest<u64>,
         option: RPCOption,
     ) -> Result<VoteResponse<u64>, RPCError<u64, BasicNode, RaftError<u64>>> {
+        #[cfg(feature = "failpoints")]
+        {
+            let target = self.target;
+            // A replayed vote response must not make the caller move to an
+            // older term, so return a stale negative response before dispatch.
+            fail::fail_point!("omega_network::receive_vote_replay", |_| {
+                Ok(VoteResponse::new(Vote::new(0, target), None, false))
+            });
+        }
+
         match self
             .round_trip(RaftRpcRequest::Vote(rpc), option)
             .await
