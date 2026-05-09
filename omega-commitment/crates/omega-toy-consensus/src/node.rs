@@ -1,8 +1,11 @@
 //! Node lifecycle.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::BTreeMap;
+use std::io::ErrorKind;
+use std::path::PathBuf;
+use std::sync::Arc;
 
+use async_trait::async_trait;
 use jsonrpsee::server::middleware::rpc::{
     Batch, Notification, Request, RpcServiceBuilder, RpcServiceT,
 };
@@ -10,27 +13,15 @@ use jsonrpsee::server::{
     BatchRequestConfig, MethodResponse, ServerBuilder, ServerConfig, ServerHandle,
 };
 use jsonrpsee::types::{ErrorCode, Id};
-use omega_network::rpc::{
-    decode_cbor, encode_cbor, OmegaNetworkError, RaftRpcRequest, RaftRpcResponse,
-};
-use tokio::sync::{mpsc, oneshot};
+use omega_network::inbound::{InboundRaftHandler, PeerEntry, RaftSwarm};
+use omega_network::rpc::{OmegaNetworkError, RaftRpcRequest, RaftRpcResponse};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::rpc::server::{OmegaRpcImpl, OmegaRpcServer, OmegaRpcShared};
 use crate::{ConsensusError, NodeConfig};
 
 type Raft = openraft::Raft<omega_mock_ledger::OmegaRaftTypeConfig>;
-
-static RAFT_REGISTRY: OnceLock<Mutex<BTreeMap<u64, Raft>>> = OnceLock::new();
-static RAFT_LINK_BLOCKS: OnceLock<Mutex<BTreeSet<(u64, u64)>>> = OnceLock::new();
-
-fn raft_registry() -> &'static Mutex<BTreeMap<u64, Raft>> {
-    RAFT_REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()))
-}
-
-fn raft_link_blocks() -> &'static Mutex<BTreeSet<(u64, u64)>> {
-    RAFT_LINK_BLOCKS.get_or_init(|| Mutex::new(BTreeSet::new()))
-}
 
 /// Live LoganNet node.
 ///
@@ -39,22 +30,14 @@ pub struct Node;
 
 /// Handle for graceful shutdown of a running [`Node`].
 ///
-/// Owns the JSON-RPC server, the in-process raft network dispatcher
-/// task, the runtime task, and the `Raft` instance. The handle's `Drop`
-/// does NOT shut anything down — callers must invoke
-/// [`NodeHandle::shutdown`] for an orderly stop. Dropping without
-/// calling `shutdown` leaks the server task and the dispatcher task,
-/// and leaves the node registered in the in-process raft dispatcher
-/// (`RAFT_REGISTRY`), where peer nodes will continue to dispatch raft
-/// RPCs to its dropped `Raft` clone — this is intentional for tests
-/// that crash a node and observe the cluster's reaction.
+/// Owns the JSON-RPC server, the libp2p raft swarm task, the runtime task,
+/// and the `Raft` instance. The handle's `Drop` does NOT shut anything down;
+/// callers must invoke [`NodeHandle::shutdown`] for an orderly stop.
 ///
-/// `shutdown` order matters: stop new RPC traffic, unregister from the
-/// in-process raft dispatcher, abort the network task, signal the
-/// runtime task, then shut down openraft. Reversing any of those steps
+/// `shutdown` order matters: stop new RPC traffic, abort the network task,
+/// signal the runtime task, then shut down openraft. Reversing those steps
 /// would let an in-flight client_write reach a dropped writer actor.
 pub struct NodeHandle {
-    node_id: u64,
     shutdown_tx: oneshot::Sender<()>,
     server_handle: ServerHandle,
     network_join: JoinHandle<()>,
@@ -66,15 +49,16 @@ impl Node {
     /// Brings the node up.
     ///
     /// Mounts SQLite plus the writer actor, creates the openraft instance,
-    /// registers the local raft RPC target, binds JSON-RPC, then initializes a
+    /// starts the libp2p raft RPC swarm, binds JSON-RPC, then initializes a
     /// fresh static cluster when this node has the lowest configured id.
     ///
     /// # Errors
     ///
     /// - [`ConsensusError::Storage`] - SQLite open, schema initialization, or
     ///   writer actor startup failed.
-    /// - [`ConsensusError::Raft`] - openraft construction, initial membership,
-    ///   or raft dispatcher registry locking failed.
+    /// - [`ConsensusError::Raft`] - openraft construction or initial
+    ///   membership failed.
+    /// - [`ConsensusError::Network`] - raft swarm startup failed.
     /// - [`ConsensusError::RpcBind`] - the JSON-RPC server failed to bind the
     ///   configured address.
     ///
@@ -87,11 +71,12 @@ impl Node {
     /// Closes: direct RPC access never exposes the writer actor, only the raft
     /// client-write API.
     ///
-    /// Fails on: storage open errors, raft initialization errors, registry
-    /// locking errors, RPC bind errors, and malformed static node
+    /// Fails on: storage open errors, raft initialization errors, libp2p
+    /// identity or address errors, RPC bind errors, and malformed static node
     /// configuration.
     pub async fn start(config: NodeConfig) -> Result<NodeHandle, ConsensusError> {
         validate_config(&config)?;
+        let identity_keypair = load_or_create_identity(&config)?;
         let ledger = Arc::new(omega_mock_ledger::MockLedger::open(&config.data_dir)?);
         let storage = omega_mock_ledger::MockLedgerStorage::new((*ledger).clone());
         let (log_store, state_machine) = storage.openraft_parts();
@@ -99,7 +84,6 @@ impl Node {
         let (network_factory, outbound_rx) = omega_network::LibP2pNetworkFactory::with_capacity(
             omega_network::DEFAULT_OUTBOUND_CAPACITY,
         );
-        let network_join = spawn_network_dispatcher(config.node_id, outbound_rx);
 
         let raft_config = openraft::Config {
             cluster_name: config.cluster_id.clone(),
@@ -118,7 +102,50 @@ impl Node {
         .await
         .map_err(|error| ConsensusError::Raft(error.to_string()))?;
 
-        register_raft(config.node_id, raft.clone())?;
+        let listen_addr: omega_network::Multiaddr = config
+            .libp2p_listen
+            .parse()
+            .map_err(|e| ConsensusError::Config(format!("libp2p_listen parse: {e}")))?;
+        let peer_entries = config
+            .peers
+            .iter()
+            .map(|peer| {
+                let peer_id = peer.libp2p_peer_id.parse().map_err(|e| {
+                    ConsensusError::Config(format!("peer {} peer_id: {e}", peer.node_id))
+                })?;
+                let address = peer.libp2p_addr.parse().map_err(|e| {
+                    ConsensusError::Config(format!("peer {} addr: {e}", peer.node_id))
+                })?;
+                Ok(PeerEntry {
+                    node_id: peer.node_id,
+                    peer_id,
+                    address,
+                })
+            })
+            .collect::<Result<Vec<_>, ConsensusError>>()?;
+        let handler = Arc::new(OmegaInboundHandler { raft: raft.clone() });
+        let mut swarm = RaftSwarm::with_keypair(
+            identity_keypair,
+            listen_addr,
+            peer_entries,
+            outbound_rx,
+            handler,
+        )
+        .await
+        .map_err(ConsensusError::Network)?;
+        let local_peer_id = swarm.local_peer_id();
+        let bound_addr = swarm.first_listen_address().await;
+        tracing::info!(
+            node_id = config.node_id,
+            %local_peer_id,
+            %bound_addr,
+            "raft libp2p swarm listening"
+        );
+        let network_join = tokio::spawn(async move {
+            if let Err(error) = swarm.run().await {
+                tracing::error!(?error, "raft libp2p swarm exited with error");
+            }
+        });
 
         if should_initialize_cluster(&config, &raft) {
             let members = initial_members(&config);
@@ -160,7 +187,6 @@ impl Node {
         });
 
         Ok(NodeHandle {
-            node_id: config.node_id,
             shutdown_tx,
             server_handle,
             network_join,
@@ -223,11 +249,47 @@ where
     }
 }
 
+struct OmegaInboundHandler {
+    raft: Raft,
+}
+
+#[async_trait]
+impl InboundRaftHandler for OmegaInboundHandler {
+    async fn handle(&self, request: RaftRpcRequest) -> Result<RaftRpcResponse, OmegaNetworkError> {
+        match request {
+            RaftRpcRequest::AppendEntries(request) => {
+                let response = self
+                    .raft
+                    .append_entries(*request)
+                    .await
+                    .map_err(|error| OmegaNetworkError::Codec(error.to_string()))?;
+                Ok(RaftRpcResponse::AppendEntries(response))
+            }
+            RaftRpcRequest::InstallSnapshot(request) => {
+                let response = self
+                    .raft
+                    .install_snapshot(*request)
+                    .await
+                    .map_err(|error| OmegaNetworkError::Codec(error.to_string()))?;
+                Ok(RaftRpcResponse::InstallSnapshot(response))
+            }
+            RaftRpcRequest::Vote(request) => {
+                let response = self
+                    .raft
+                    .vote(request)
+                    .await
+                    .map_err(|error| OmegaNetworkError::Codec(error.to_string()))?;
+                Ok(RaftRpcResponse::Vote(response))
+            }
+        }
+    }
+}
+
 impl NodeHandle {
     /// Initiates graceful shutdown.
     ///
-    /// Stops new JSON-RPC requests, unregisters the node from the in-process
-    /// raft dispatcher, signals the runtime task, and shuts down openraft.
+    /// Stops new JSON-RPC requests, aborts the raft swarm, signals the
+    /// runtime task, and shuts down openraft.
     ///
     /// # Errors
     ///
@@ -237,15 +299,14 @@ impl NodeHandle {
     /// # Soundness
     ///
     /// Preserves: shutdown stops accepting external submits before removing
-    /// the node from raft RPC dispatch.
+    /// the local raft instance.
     ///
-    /// Closes: stale peers cannot route new raft RPCs to a dropped handle after
-    /// unregister completes.
+    /// Closes: stale peers cannot route new raft RPCs through the local
+    /// libp2p listener after the swarm task is aborted.
     ///
     /// Fails on: join failures or openraft shutdown failures.
     pub async fn shutdown(self) -> Result<(), ConsensusError> {
         let _ = self.server_handle.stop();
-        unregister_raft(self.node_id);
         self.network_join.abort();
         let _ = self.shutdown_tx.send(());
         self.join
@@ -261,20 +322,12 @@ impl NodeHandle {
 
 /// Validates a [`NodeConfig`] before bring-up.
 ///
-/// Closes two PR #7-review classes of operator misconfiguration:
+/// Closes a PR #7-review class of operator misconfiguration:
 ///
 /// - **N7-M1** — The spec says LoganNet v0.1 binds JSON-RPC localhost-only
 ///   ("no TLS, no auth, no rate limiting"). A non-loopback bind would expose
 ///   an unauthenticated write-RPC to the network. Reject anything not bound
 ///   to a loopback address with [`ConsensusError::Config`].
-/// - **P0-C1** — In v0.1 the in-process raft dispatcher routes only within a
-///   single OS process via `RAFT_REGISTRY`. Multi-process bring-up via
-///   `--peer ...` cannot form a quorum because each process has its own
-///   registry. Bring-up emits a loud `tracing::warn!` whenever `peers` is
-///   non-empty, naming the limitation; it does not abort because the
-///   in-process supported path (`examples/three_node_local.rs` and the
-///   integration tests) brings up 3 nodes from one process and they all
-///   carry non-empty `peers`. The libp2p inbound actor lands in Group 2.
 fn validate_config(config: &NodeConfig) -> Result<(), ConsensusError> {
     if !config.rpc.bind.ip().is_loopback() {
         return Err(ConsensusError::Config(format!(
@@ -283,17 +336,6 @@ fn validate_config(config: &NodeConfig) -> Result<(), ConsensusError> {
              Bind to 127.0.0.1 or ::1.",
             config.rpc.bind
         )));
-    }
-    if !config.peers.is_empty() {
-        tracing::warn!(
-            node_id = config.node_id,
-            peer_count = config.peers.len(),
-            "v0.1 LoganNet uses an in-process raft dispatcher; cross-process raft \
-             RPCs to peers in another OS process are silently dropped. The supported \
-             multi-node path is a single-process example or integration test where \
-             all node handles share the in-process RAFT_REGISTRY. Multi-process \
-             bring-up requires the libp2p inbound actor (Group 2)."
-        );
     }
     Ok(())
 }
@@ -321,93 +363,47 @@ fn initial_members(config: &NodeConfig) -> BTreeMap<u64, openraft::BasicNode> {
     members
 }
 
-fn register_raft(node_id: u64, raft: Raft) -> Result<(), ConsensusError> {
-    let mut registry = raft_registry()
-        .lock()
-        .map_err(|error| ConsensusError::Raft(format!("raft registry poisoned: {error}")))?;
-    registry.insert(node_id, raft);
-    Ok(())
-}
-
-fn unregister_raft(node_id: u64) {
-    if let Ok(mut registry) = raft_registry().lock() {
-        registry.remove(&node_id);
-    }
-}
-
-fn route_raft(node_id: u64) -> Option<Raft> {
-    raft_registry()
-        .lock()
-        .ok()
-        .and_then(|registry| registry.get(&node_id).cloned())
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) fn clear_raft_link_blocks_for_test() {
-    if let Ok(mut blocks) = raft_link_blocks().lock() {
-        blocks.clear();
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) fn partition_raft_link_for_test(a: u64, b: u64) {
-    if let Ok(mut blocks) = raft_link_blocks().lock() {
-        blocks.insert((a, b));
-        blocks.insert((b, a));
-    }
-}
-
-fn raft_link_blocked(source: u64, target: u64) -> bool {
-    raft_link_blocks()
-        .lock()
-        .map(|blocks| blocks.contains(&(source, target)))
-        .unwrap_or(true)
-}
-
-fn spawn_network_dispatcher(
-    source: u64,
-    mut outbound_rx: mpsc::Receiver<omega_network::OutboundRaftRequest>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        while let Some(outbound) = outbound_rx.recv().await {
-            let response = dispatch_raft_request(source, outbound.target, &outbound.payload).await;
-            let _ = outbound.reply.send(response);
+fn identity_path(config: &NodeConfig) -> PathBuf {
+    config.identity_file.clone().unwrap_or_else(|| {
+        if config.data_dir.extension().is_some() {
+            config.data_dir.with_extension("identity.bin")
+        } else {
+            config.data_dir.join("identity.bin")
         }
     })
 }
 
-async fn dispatch_raft_request(
-    source: u64,
-    target: u64,
-    payload: &[u8],
-) -> Result<Vec<u8>, OmegaNetworkError> {
-    if raft_link_blocked(source, target) {
-        return Err(OmegaNetworkError::Timeout);
+fn load_or_create_identity(
+    config: &NodeConfig,
+) -> Result<omega_network::identity::Keypair, ConsensusError> {
+    let path = identity_path(config);
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            omega_network::identity::Keypair::from_protobuf_encoding(&bytes).map_err(|error| {
+                ConsensusError::Config(format!("identity_file {}: {error}", path.display()))
+            })
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let keypair = omega_network::identity::Keypair::generate_ed25519();
+            let bytes = keypair.to_protobuf_encoding().map_err(|error| {
+                ConsensusError::Config(format!("identity_file {} encode: {error}", path.display()))
+            })?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    ConsensusError::Config(format!(
+                        "identity_file {} parent: {error}",
+                        path.display()
+                    ))
+                })?;
+            }
+            std::fs::write(&path, bytes).map_err(|error| {
+                ConsensusError::Config(format!("identity_file {} write: {error}", path.display()))
+            })?;
+            Ok(keypair)
+        }
+        Err(error) => Err(ConsensusError::Config(format!(
+            "identity_file {} read: {error}",
+            path.display()
+        ))),
     }
-    let raft = route_raft(target).ok_or(OmegaNetworkError::OutboundClosed)?;
-    let request: RaftRpcRequest = decode_cbor(payload)?;
-    let response = match request {
-        RaftRpcRequest::AppendEntries(request) => {
-            let response = raft
-                .append_entries(*request)
-                .await
-                .map_err(|error| OmegaNetworkError::Codec(error.to_string()))?;
-            RaftRpcResponse::AppendEntries(response)
-        }
-        RaftRpcRequest::InstallSnapshot(request) => {
-            let response = raft
-                .install_snapshot(*request)
-                .await
-                .map_err(|error| OmegaNetworkError::Codec(error.to_string()))?;
-            RaftRpcResponse::InstallSnapshot(response)
-        }
-        RaftRpcRequest::Vote(request) => {
-            let response = raft
-                .vote(request)
-                .await
-                .map_err(|error| OmegaNetworkError::Codec(error.to_string()))?;
-            RaftRpcResponse::Vote(response)
-        }
-    };
-    encode_cbor(&response)
 }

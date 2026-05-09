@@ -28,12 +28,15 @@ struct RunArgs {
     /// Path to the SQLite WAL directory; created if absent.
     #[arg(long)]
     data_dir: PathBuf,
+    /// Path to the libp2p identity keypair file; created if absent.
+    #[arg(long)]
+    identity_file: Option<PathBuf>,
     /// Libp2p multiaddr the node listens on.
     #[arg(long)]
     listen: String,
-    /// Static peer; format: `<id>,<libp2p_addr>,<rpc_url>`. Repeat once per
-    /// peer.
-    #[arg(long = "peer", value_name = "ID,ADDR,URL")]
+    /// Static peer; format: `<id>,<peer_id>,<libp2p_addr>,<rpc_url>`.
+    /// Repeat once per peer.
+    #[arg(long = "peer", value_name = "ID,PEER_ID,ADDR,URL")]
     peers: Vec<PeerConfig>,
     /// JSON-RPC HTTP bind address.
     #[arg(long)]
@@ -68,6 +71,7 @@ async fn run(args: RunArgs) -> anyhow::Result<()> {
     let config = NodeConfig {
         node_id: args.node_id,
         data_dir: args.data_dir,
+        identity_file: args.identity_file,
         libp2p_listen: args.listen,
         peers: args.peers,
         rpc: RpcConfig {
