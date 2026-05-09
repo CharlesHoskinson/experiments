@@ -11,16 +11,24 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use libp2p::request_response::{
     self, Behaviour as RrBehaviour, Config as RrConfig, Event as RrEvent, Message as RrMessage,
-    ProtocolSupport, ResponseChannel,
+    OutboundFailure, ProtocolSupport, ResponseChannel,
 };
 use libp2p::swarm::SwarmEvent;
 use libp2p::{noise, tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder};
-use openraft::Vote;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::protocol::{RaftCodec, RAFT_PROTOCOL};
 use crate::rpc::{OmegaNetworkError, RaftRpcRequest, RaftRpcResponse};
 use crate::OutboundRaftRequest;
+
+/// Default request-response timeout for raft RPCs.
+///
+/// Sized to comfortably outlast openraft 0.9's election cycle
+/// (`election_timeout_max = 3000ms` plus one heartbeat) without leaving
+/// outbound oneshots dangling longer than necessary when a peer is stuck.
+/// Phase 2 will plumb this from `NodeConfig` so operators can tune per
+/// deployment.
+pub const DEFAULT_RAFT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Application-side handler for inbound raft RPCs.
 ///
@@ -87,6 +95,10 @@ impl RaftSwarm {
     /// Builds a swarm that listens on `listen_addr`, tracks each peer address,
     /// and routes inbound requests through `handler`.
     ///
+    /// Uses [`DEFAULT_RAFT_REQUEST_TIMEOUT`] for the libp2p request-response
+    /// timeout. Use [`RaftSwarm::with_request_timeout`] to override (Phase 2
+    /// will plumb this from `NodeConfig`).
+    ///
     /// # Errors
     ///
     /// Returns [`OmegaNetworkError::Codec`] when the libp2p transport,
@@ -106,6 +118,28 @@ impl RaftSwarm {
         outbound_rx: mpsc::Receiver<OutboundRaftRequest>,
         handler: Arc<dyn InboundRaftHandler>,
     ) -> Result<Self, OmegaNetworkError> {
+        Self::with_request_timeout(
+            listen_addr,
+            peers,
+            outbound_rx,
+            handler,
+            DEFAULT_RAFT_REQUEST_TIMEOUT,
+        )
+        .await
+    }
+
+    /// Like [`RaftSwarm::new`] but with an explicit request-response timeout.
+    ///
+    /// # Errors
+    ///
+    /// See [`RaftSwarm::new`].
+    pub async fn with_request_timeout(
+        listen_addr: Multiaddr,
+        peers: Vec<PeerEntry>,
+        outbound_rx: mpsc::Receiver<OutboundRaftRequest>,
+        handler: Arc<dyn InboundRaftHandler>,
+        request_timeout: Duration,
+    ) -> Result<Self, OmegaNetworkError> {
         let mut swarm = SwarmBuilder::with_new_identity()
             .with_tokio()
             .with_tcp(
@@ -117,7 +151,7 @@ impl RaftSwarm {
             .with_behaviour(|_| {
                 RrBehaviour::new(
                     [(RAFT_PROTOCOL, ProtocolSupport::Full)],
-                    RrConfig::default().with_request_timeout(Duration::from_secs(30)),
+                    RrConfig::default().with_request_timeout(request_timeout),
                 )
             })
             .map_err(|e| OmegaNetworkError::Codec(e.to_string()))?
@@ -150,6 +184,10 @@ impl RaftSwarm {
     }
 
     /// Awaits the first listen address assigned by the transport.
+    ///
+    /// Call exactly once, before [`RaftSwarm::run`]. After `run` is spawned
+    /// the swarm has a single consumer of its event stream; calling this
+    /// method concurrently with `run` would race two consumers and deadlock.
     ///
     /// # Soundness
     ///
@@ -243,11 +281,11 @@ impl RaftSwarm {
                 request_id, error, ..
             }) => {
                 if let Some(tx) = self.pending.remove(&request_id) {
-                    let _ = tx.send(Err(OmegaNetworkError::Codec(error.to_string())));
+                    let _ = tx.send(Err(map_outbound_failure(error)));
                 }
             }
             SwarmEvent::Behaviour(RrEvent::InboundFailure { error, .. }) => {
-                let _ = error;
+                tracing::debug!(?error, "libp2p inbound raft RPC failure");
             }
             SwarmEvent::Behaviour(RrEvent::ResponseSent { .. }) => {}
             _ => {}
@@ -261,24 +299,40 @@ impl RaftSwarm {
         request: RaftRpcRequest,
         channel: ResponseChannel<RaftRpcResponse>,
     ) -> Result<(), OmegaNetworkError> {
+        // Phase 2: verify `peer` matches the openraft NodeId the envelope
+        // claims, per the byzantine-binding limitation in `lib.rs`.
         let _ = self.peer_id_to_node.get(&peer);
-        let response = self.handler.handle(request).await.unwrap_or_else(|_| {
-            RaftRpcResponse::Vote(openraft::raft::VoteResponse::new(
-                Vote::new(0, 0),
-                None,
-                false,
-            ))
-        });
-        let _ = self.swarm.behaviour_mut().send_response(channel, response);
+        match self.handler.handle(request).await {
+            Ok(response) => {
+                let _ = self.swarm.behaviour_mut().send_response(channel, response);
+            }
+            Err(error) => {
+                // Drop the response channel rather than fabricate a
+                // wrong-typed reply. The requester sees `OutboundFailure`
+                // (closed substream) and openraft retries on its normal
+                // schedule; better than a `Vote` reply to an `AppendEntries`
+                // request which would surface as a confusing typed mismatch.
+                tracing::warn!(
+                    ?error,
+                    "inbound raft RPC handler errored; dropping response channel"
+                );
+                drop(channel);
+            }
+        }
         Ok(())
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn raft_swarm_skeleton_compiles() {
-        // Just a compile gate; full round-trip test lives in
-        // `tests/loopback_round_trip.rs`.
+/// Maps a libp2p `OutboundFailure` to the most semantically-precise
+/// [`OmegaNetworkError`] variant.
+fn map_outbound_failure(error: OutboundFailure) -> OmegaNetworkError {
+    match error {
+        OutboundFailure::Timeout => OmegaNetworkError::Timeout,
+        OutboundFailure::ConnectionClosed => OmegaNetworkError::OutboundClosed,
+        OutboundFailure::DialFailure => OmegaNetworkError::OutboundClosed,
+        OutboundFailure::UnsupportedProtocols => OmegaNetworkError::Codec(
+            "remote peer does not advertise the omega raft protocol".into(),
+        ),
+        OutboundFailure::Io(err) => OmegaNetworkError::Codec(err.to_string()),
     }
 }

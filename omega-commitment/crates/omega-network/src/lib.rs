@@ -53,7 +53,7 @@ pub mod snapshot;
 
 mod network;
 
-pub use inbound::InboundRaftHandler;
+pub use inbound::{InboundRaftHandler, DEFAULT_RAFT_REQUEST_TIMEOUT};
 pub use network::{
     LibP2pNetwork, LibP2pNetworkFactory, OutboundRaftRequest, DEFAULT_OUTBOUND_CAPACITY,
 };
