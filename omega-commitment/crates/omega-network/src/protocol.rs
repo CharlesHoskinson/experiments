@@ -28,11 +28,7 @@ impl Codec for RaftCodec {
     type Request = RaftRpcRequest;
     type Response = RaftRpcResponse;
 
-    async fn read_request<T>(
-        &mut self,
-        _: &Self::Protocol,
-        io: &mut T,
-    ) -> io::Result<Self::Request>
+    async fn read_request<T>(&mut self, _: &Self::Protocol, io: &mut T) -> io::Result<Self::Request>
     where
         T: AsyncRead + Unpin + Send,
     {

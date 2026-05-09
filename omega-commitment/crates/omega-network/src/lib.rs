@@ -53,8 +53,8 @@ pub mod snapshot;
 
 mod network;
 
+pub use inbound::InboundRaftHandler;
 pub use network::{
     LibP2pNetwork, LibP2pNetworkFactory, OutboundRaftRequest, DEFAULT_OUTBOUND_CAPACITY,
 };
-pub use inbound::InboundRaftHandler;
 pub use protocol::{RaftCodec, MAX_FRAME_BYTES, RAFT_PROTOCOL};

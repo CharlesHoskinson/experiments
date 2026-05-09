@@ -8,8 +8,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use libp2p::request_response::{self, Behaviour as RrBehaviour, Config as RrConfig, ProtocolSupport};
+use futures::StreamExt;
+use libp2p::request_response::{
+    self, Behaviour as RrBehaviour, Config as RrConfig, Event as RrEvent, Message as RrMessage,
+    ProtocolSupport, ResponseChannel,
+};
+use libp2p::swarm::SwarmEvent;
 use libp2p::{noise, tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder};
+use openraft::Vote;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::protocol::{RaftCodec, RAFT_PROTOCOL};
@@ -136,6 +142,135 @@ impl RaftSwarm {
             pending: HashMap::new(),
             handler,
         })
+    }
+
+    /// Returns the local libp2p peer id.
+    pub fn local_peer_id(&self) -> PeerId {
+        *self.swarm.local_peer_id()
+    }
+
+    /// Awaits the first listen address assigned by the transport.
+    ///
+    /// # Soundness
+    ///
+    /// Preserves: the returned address is emitted by the libp2p `Swarm` for
+    /// this node after `listen_on` succeeds, so peers can dial the actual bound
+    /// port when `listen_addr` used `/tcp/0`.
+    ///
+    /// Closes: tests do not guess ephemeral ports; they wait for the address
+    /// assigned by the transport.
+    pub async fn first_listen_address(&mut self) -> Multiaddr {
+        loop {
+            match self.swarm.select_next_some().await {
+                SwarmEvent::NewListenAddr { address, .. } => return address,
+                _ => continue,
+            }
+        }
+    }
+
+    /// Drives the libp2p swarm until the outbound request channel closes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OmegaNetworkError`] when an outbound request payload cannot be
+    /// decoded or an inbound response cannot be encoded for the existing
+    /// `LibP2pNetwork` reply channel.
+    ///
+    /// # Soundness
+    ///
+    /// Preserves: each outbound request id is paired with one pending reply
+    /// channel and removed when the response or failure arrives. Each inbound
+    /// request is handed to the configured [`InboundRaftHandler`] before a
+    /// response is sent on the libp2p response channel.
+    ///
+    /// Closes: request-response correlation does not rely on process-global
+    /// state; libp2p's `OutboundRequestId` selects the matching oneshot.
+    pub async fn run(mut self) -> Result<(), OmegaNetworkError> {
+        loop {
+            tokio::select! {
+                event = self.swarm.select_next_some() => {
+                    self.on_swarm_event(event).await?;
+                }
+                outbound = self.outbound_rx.recv() => {
+                    let Some(outbound) = outbound else {
+                        return Ok(());
+                    };
+                    self.on_outbound(outbound).await?;
+                }
+            }
+        }
+    }
+
+    async fn on_outbound(
+        &mut self,
+        outbound: OutboundRaftRequest,
+    ) -> Result<(), OmegaNetworkError> {
+        let Some(peer) = self.peers.get(&outbound.target) else {
+            let _ = outbound.reply.send(Err(OmegaNetworkError::OutboundClosed));
+            return Ok(());
+        };
+        let request: RaftRpcRequest = crate::rpc::decode_cbor(&outbound.payload)?;
+        let id = self
+            .swarm
+            .behaviour_mut()
+            .send_request(&peer.peer_id, request);
+        self.pending.insert(id, outbound.reply);
+        Ok(())
+    }
+
+    async fn on_swarm_event(
+        &mut self,
+        event: SwarmEvent<RrEvent<RaftRpcRequest, RaftRpcResponse>>,
+    ) -> Result<(), OmegaNetworkError> {
+        match event {
+            SwarmEvent::Behaviour(RrEvent::Message { peer, message, .. }) => match message {
+                RrMessage::Request {
+                    request, channel, ..
+                } => {
+                    self.on_inbound_request(peer, request, channel).await?;
+                }
+                RrMessage::Response {
+                    request_id,
+                    response,
+                } => {
+                    if let Some(tx) = self.pending.remove(&request_id) {
+                        let bytes = crate::rpc::encode_cbor(&response)?;
+                        let _ = tx.send(Ok(bytes));
+                    }
+                }
+            },
+            SwarmEvent::Behaviour(RrEvent::OutboundFailure {
+                request_id, error, ..
+            }) => {
+                if let Some(tx) = self.pending.remove(&request_id) {
+                    let _ = tx.send(Err(OmegaNetworkError::Codec(error.to_string())));
+                }
+            }
+            SwarmEvent::Behaviour(RrEvent::InboundFailure { error, .. }) => {
+                let _ = error;
+            }
+            SwarmEvent::Behaviour(RrEvent::ResponseSent { .. }) => {}
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn on_inbound_request(
+        &mut self,
+        peer: PeerId,
+        request: RaftRpcRequest,
+        channel: ResponseChannel<RaftRpcResponse>,
+    ) -> Result<(), OmegaNetworkError> {
+        let _ = self.peer_id_to_node.get(&peer);
+        let response = self.handler.handle(request).await.unwrap_or_else(|_| {
+            RaftRpcResponse::Vote(openraft::raft::VoteResponse::new(
+                Vote::new(0, 0),
+                None,
+                false,
+            ))
+        });
+        let _ = self.swarm.behaviour_mut().send_response(channel, response);
+        Ok(())
     }
 }
 
