@@ -46,6 +46,7 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 
 pub mod discovery;
+pub mod protocol;
 pub mod rpc;
 pub mod snapshot;
 
@@ -54,3 +55,4 @@ mod network;
 pub use network::{
     LibP2pNetwork, LibP2pNetworkFactory, OutboundRaftRequest, DEFAULT_OUTBOUND_CAPACITY,
 };
+pub use protocol::{RaftCodec, MAX_FRAME_BYTES, RAFT_PROTOCOL};

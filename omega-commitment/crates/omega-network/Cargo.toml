@@ -13,8 +13,10 @@ failpoints = ["dep:fail", "fail/failpoints"]
 [dependencies]
 omega-mock-ledger = { path = "../omega-mock-ledger" }
 
+async-trait.workspace = true
 ciborium.workspace = true
 fail = { workspace = true, optional = true }
+futures.workspace = true
 hex.workspace = true
 libp2p.workspace = true
 openraft.workspace = true
