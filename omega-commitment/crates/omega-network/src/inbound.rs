@@ -14,7 +14,7 @@ use libp2p::request_response::{
     OutboundFailure, ProtocolSupport, ResponseChannel,
 };
 use libp2p::swarm::SwarmEvent;
-use libp2p::{noise, tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder};
+use libp2p::{identity, noise, tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::protocol::{RaftCodec, RAFT_PROTOCOL};
@@ -118,7 +118,40 @@ impl RaftSwarm {
         outbound_rx: mpsc::Receiver<OutboundRaftRequest>,
         handler: Arc<dyn InboundRaftHandler>,
     ) -> Result<Self, OmegaNetworkError> {
-        Self::with_request_timeout(
+        Self::with_keypair_and_request_timeout(
+            identity::Keypair::generate_ed25519(),
+            listen_addr,
+            peers,
+            outbound_rx,
+            handler,
+            DEFAULT_RAFT_REQUEST_TIMEOUT,
+        )
+        .await
+    }
+
+    /// Builds a swarm with an explicit libp2p identity keypair.
+    ///
+    /// # Errors
+    ///
+    /// See [`RaftSwarm::new`].
+    ///
+    /// # Soundness
+    ///
+    /// Preserves: the swarm's advertised [`PeerId`] is derived from
+    /// `keypair`, allowing callers to bind openraft node ids to stable libp2p
+    /// peer ids in static topology config.
+    ///
+    /// Closes: peers no longer dial a randomly generated identity that cannot
+    /// match the configured `PeerEntry::peer_id`.
+    pub async fn with_keypair(
+        keypair: identity::Keypair,
+        listen_addr: Multiaddr,
+        peers: Vec<PeerEntry>,
+        outbound_rx: mpsc::Receiver<OutboundRaftRequest>,
+        handler: Arc<dyn InboundRaftHandler>,
+    ) -> Result<Self, OmegaNetworkError> {
+        Self::with_keypair_and_request_timeout(
+            keypair,
             listen_addr,
             peers,
             outbound_rx,
@@ -140,7 +173,36 @@ impl RaftSwarm {
         handler: Arc<dyn InboundRaftHandler>,
         request_timeout: Duration,
     ) -> Result<Self, OmegaNetworkError> {
-        let mut swarm = SwarmBuilder::with_new_identity()
+        Self::with_keypair_and_request_timeout(
+            identity::Keypair::generate_ed25519(),
+            listen_addr,
+            peers,
+            outbound_rx,
+            handler,
+            request_timeout,
+        )
+        .await
+    }
+
+    /// Builds a swarm with explicit identity and request-response timeout.
+    ///
+    /// # Errors
+    ///
+    /// See [`RaftSwarm::new`].
+    ///
+    /// # Soundness
+    ///
+    /// Preserves: the swarm advertises the peer id derived from `keypair` and
+    /// bounds each pending request by `request_timeout`.
+    pub async fn with_keypair_and_request_timeout(
+        keypair: identity::Keypair,
+        listen_addr: Multiaddr,
+        peers: Vec<PeerEntry>,
+        outbound_rx: mpsc::Receiver<OutboundRaftRequest>,
+        handler: Arc<dyn InboundRaftHandler>,
+        request_timeout: Duration,
+    ) -> Result<Self, OmegaNetworkError> {
+        let mut swarm = SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
                 tcp::Config::default(),
