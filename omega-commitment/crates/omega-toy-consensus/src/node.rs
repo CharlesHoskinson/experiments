@@ -34,9 +34,12 @@ pub struct Node;
 /// and the `Raft` instance. The handle's `Drop` does NOT shut anything down;
 /// callers must invoke [`NodeHandle::shutdown`] for an orderly stop.
 ///
-/// `shutdown` order matters: stop new RPC traffic, abort the network task,
-/// signal the runtime task, then shut down openraft. Reversing those steps
-/// would let an in-flight client_write reach a dropped writer actor.
+/// `shutdown` order matters: stop new RPC traffic, shut down openraft (which
+/// drops the per-peer network senders and lets the swarm drain naturally),
+/// wait for the swarm task to exit (with a timeout fallback), then signal
+/// the runtime task. Reversing those steps would let an in-flight
+/// client_write reach a dropped writer actor or kill the swarm before
+/// in-flight inbound responses flush.
 pub struct NodeHandle {
     shutdown_tx: oneshot::Sender<()>,
     server_handle: ServerHandle,
@@ -130,7 +133,7 @@ impl Node {
             peer_entries,
             outbound_rx,
             handler,
-            config.apply_deadline,
+            config.effective_raft_rpc_timeout(),
         )
         .await
         .map_err(ConsensusError::Network)?;
@@ -289,8 +292,18 @@ impl InboundRaftHandler for OmegaInboundHandler {
 impl NodeHandle {
     /// Initiates graceful shutdown.
     ///
-    /// Stops new JSON-RPC requests, aborts the raft swarm, signals the
-    /// runtime task, and shuts down openraft.
+    /// Order matters and is the load-bearing invariant of this method:
+    ///
+    /// 1. Stop new JSON-RPC requests so no fresh `client_write` enters
+    ///    the raft pipeline.
+    /// 2. Shut down openraft. This drops the network factory's per-peer
+    ///    senders, which closes the swarm's `outbound_rx` and lets
+    ///    `RaftSwarm::run` exit naturally — in-flight inbound responses
+    ///    get a chance to flush rather than being killed mid-send.
+    /// 3. Wait up to `SHUTDOWN_DRAIN` for the swarm task to drain. If
+    ///    it doesn't exit in that window, abort it (so a stuck swarm
+    ///    cannot wedge `NodeHandle::shutdown` indefinitely).
+    /// 4. Signal the runtime task and join.
     ///
     /// # Errors
     ///
@@ -299,24 +312,45 @@ impl NodeHandle {
     ///
     /// # Soundness
     ///
-    /// Preserves: shutdown stops accepting external submits before removing
-    /// the local raft instance.
+    /// Preserves: shutdown stops accepting external submits before
+    /// dropping the raft instance, and the swarm gets a graceful drain
+    /// window so a peer mid-RPC sees a clean substream close instead of
+    /// an aborted task.
     ///
     /// Closes: stale peers cannot route new raft RPCs through the local
-    /// libp2p listener after the swarm task is aborted.
+    /// libp2p listener once the swarm task has exited.
     ///
-    /// Fails on: join failures or openraft shutdown failures.
+    /// Fails on: openraft shutdown failures and join failures. A swarm
+    /// that does not drain within `SHUTDOWN_DRAIN` is aborted; that
+    /// path is silent because the abort is a fallback after the graceful
+    /// path was already attempted.
     pub async fn shutdown(self) -> Result<(), ConsensusError> {
+        const SHUTDOWN_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
+
         let _ = self.server_handle.stop();
-        self.network_join.abort();
-        let _ = self.shutdown_tx.send(());
-        self.join
-            .await
-            .map_err(|error| ConsensusError::ShutdownJoin(error.to_string()))??;
         self.raft
             .shutdown()
             .await
             .map_err(|error| ConsensusError::Raft(error.to_string()))?;
+        // Keep the JoinHandle in scope through the timeout so we can abort
+        // it if the swarm doesn't drain — `tokio::time::timeout` drops the
+        // inner future on Elapsed, and a dropped JoinHandle detaches
+        // (continues running) rather than aborts.
+        let abort_handle = self.network_join.abort_handle();
+        if tokio::time::timeout(SHUTDOWN_DRAIN, self.network_join)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "raft swarm did not drain within {:?}; aborting",
+                SHUTDOWN_DRAIN
+            );
+            abort_handle.abort();
+        }
+        let _ = self.shutdown_tx.send(());
+        self.join
+            .await
+            .map_err(|error| ConsensusError::ShutdownJoin(error.to_string()))??;
         Ok(())
     }
 }
@@ -381,28 +415,34 @@ fn load_or_create_identity(
     match std::fs::read(&path) {
         Ok(bytes) => {
             omega_network::identity::Keypair::from_protobuf_encoding(&bytes).map_err(|error| {
-                ConsensusError::Config(format!("identity_file {}: {error}", path.display()))
+                ConsensusError::Identity(format!(
+                    "identity_file {} decode: {error}",
+                    path.display()
+                ))
             })
         }
         Err(error) if error.kind() == ErrorKind::NotFound => {
             let keypair = omega_network::identity::Keypair::generate_ed25519();
             let bytes = keypair.to_protobuf_encoding().map_err(|error| {
-                ConsensusError::Config(format!("identity_file {} encode: {error}", path.display()))
+                ConsensusError::Identity(format!(
+                    "identity_file {} encode: {error}",
+                    path.display()
+                ))
             })?;
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| {
-                    ConsensusError::Config(format!(
+                    ConsensusError::Identity(format!(
                         "identity_file {} parent: {error}",
                         path.display()
                     ))
                 })?;
             }
             std::fs::write(&path, bytes).map_err(|error| {
-                ConsensusError::Config(format!("identity_file {} write: {error}", path.display()))
+                ConsensusError::Identity(format!("identity_file {} write: {error}", path.display()))
             })?;
             Ok(keypair)
         }
-        Err(error) => Err(ConsensusError::Config(format!(
+        Err(error) => Err(ConsensusError::Identity(format!(
             "identity_file {} read: {error}",
             path.display()
         ))),

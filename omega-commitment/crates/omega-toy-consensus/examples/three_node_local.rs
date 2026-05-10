@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
             },
             cluster_id: "loganet-dev".into(),
             apply_deadline: Duration::from_secs(3_600),
+            raft_rpc_timeout: None,
         }
     };
 

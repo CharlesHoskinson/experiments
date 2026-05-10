@@ -12,6 +12,23 @@ fn single_node_localhost_basic() {
     assert_eq!(cfg.rpc.max_batch, 25);
     assert_eq!(cfg.rpc.max_request_bytes, 1024 * 1024);
     assert_eq!(cfg.apply_deadline, Duration::from_secs(5));
+    assert_eq!(cfg.raft_rpc_timeout, None);
+}
+
+#[test]
+fn effective_raft_rpc_timeout_defaults_to_apply_deadline() {
+    let mut cfg = NodeConfig::single_node_localhost(1).unwrap();
+    cfg.apply_deadline = Duration::from_secs(7);
+    cfg.raft_rpc_timeout = None;
+    assert_eq!(cfg.effective_raft_rpc_timeout(), Duration::from_secs(7));
+}
+
+#[test]
+fn effective_raft_rpc_timeout_uses_explicit_override() {
+    let mut cfg = NodeConfig::single_node_localhost(1).unwrap();
+    cfg.apply_deadline = Duration::from_secs(7);
+    cfg.raft_rpc_timeout = Some(Duration::from_secs(2));
+    assert_eq!(cfg.effective_raft_rpc_timeout(), Duration::from_secs(2));
 }
 
 #[test]
@@ -66,10 +83,12 @@ fn node_config_serde_round_trip_toml() {
         },
         cluster_id: "loganet-dev".into(),
         apply_deadline: Duration::from_secs(5),
+        raft_rpc_timeout: Some(Duration::from_secs(2)),
     };
     let toml = toml::to_string(&cfg).unwrap();
     let back: NodeConfig = toml::from_str(&toml).unwrap();
     assert_eq!(back.node_id, 7);
     assert_eq!(back.peers.len(), 1);
     assert_eq!(back.apply_deadline, Duration::from_secs(5));
+    assert_eq!(back.raft_rpc_timeout, Some(Duration::from_secs(2)));
 }

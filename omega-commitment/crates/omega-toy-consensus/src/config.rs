@@ -26,8 +26,33 @@ pub struct NodeConfig {
     /// Cluster identifier; must match across all peers.
     pub cluster_id: String,
     /// Apply deadline; default 5s.
+    ///
+    /// Bounds `Raft::client_write` (the JSON-RPC `omega_submitClaim` server
+    /// path) — i.e. how long a client waits for raft to commit + apply.
     #[serde(with = "humantime_serde", default = "default_apply_deadline")]
     pub apply_deadline: Duration,
+
+    /// Per-peer libp2p raft RPC request timeout.
+    ///
+    /// Bounds one peer-to-peer raft RPC (AppendEntries / Vote /
+    /// InstallSnapshot). Distinct from [`apply_deadline`](Self::apply_deadline),
+    /// which bounds the whole client-write call. When `None`, defaults to
+    /// `apply_deadline` for back-compat with v0.1 configs that pre-date this
+    /// field.
+    #[serde(
+        with = "humantime_serde::option",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub raft_rpc_timeout: Option<Duration>,
+}
+
+impl NodeConfig {
+    /// Returns the configured raft RPC timeout, defaulting to
+    /// [`apply_deadline`](Self::apply_deadline) when unset.
+    pub fn effective_raft_rpc_timeout(&self) -> Duration {
+        self.raft_rpc_timeout.unwrap_or(self.apply_deadline)
+    }
 }
 
 fn default_apply_deadline() -> Duration {
@@ -135,6 +160,7 @@ impl NodeConfig {
             },
             cluster_id: "loganet-dev".into(),
             apply_deadline: Duration::from_secs(5),
+            raft_rpc_timeout: None,
         })
     }
 }

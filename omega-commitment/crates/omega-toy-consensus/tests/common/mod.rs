@@ -53,6 +53,7 @@ pub fn three_node_configs_with_deadline(apply_deadline: Duration) -> [NodeConfig
             },
             cluster_id: "loganet-test".into(),
             apply_deadline,
+            raft_rpc_timeout: None,
         }
     };
     [
