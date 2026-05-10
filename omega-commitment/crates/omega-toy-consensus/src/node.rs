@@ -124,12 +124,13 @@ impl Node {
             })
             .collect::<Result<Vec<_>, ConsensusError>>()?;
         let handler = Arc::new(OmegaInboundHandler { raft: raft.clone() });
-        let mut swarm = RaftSwarm::with_keypair(
+        let mut swarm = RaftSwarm::with_keypair_and_request_timeout(
             identity_keypair,
             listen_addr,
             peer_entries,
             outbound_rx,
             handler,
+            config.apply_deadline,
         )
         .await
         .map_err(ConsensusError::Network)?;
