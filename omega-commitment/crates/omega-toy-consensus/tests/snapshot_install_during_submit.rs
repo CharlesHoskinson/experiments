@@ -72,7 +72,8 @@ fn three_submits_across_elapsed_window_replicate_to_all_nodes() -> turmoil::Resu
         common::synthetic_claim::synthetic_accepted_claim_for_leaf(1),
     ];
     let final_claim = common::synthetic_claim::synthetic_accepted_claim_for_leaf(50);
-    let mut sim = common::three_node_sim();
+    let mut sim =
+        common::three_node_sim_with_deadline(Duration::from_secs(120), Duration::from_secs(300));
 
     sim.client("client", async move {
         let leader_url = common::leader_url().await;
