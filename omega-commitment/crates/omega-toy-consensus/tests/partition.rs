@@ -13,7 +13,7 @@ fn node_url(node_id: u64) -> String {
     format!("http://127.0.0.1:800{node_id}")
 }
 
-async fn state(node_id: u64) -> omega_toy_consensus::NodeState {
+async fn state(node_id: u64) -> Result<omega_toy_consensus::NodeState, ClientError> {
     let client = jsonrpsee::http_client::HttpClientBuilder::default()
         .build(node_url(node_id))
         .unwrap();
@@ -23,27 +23,35 @@ async fn state(node_id: u64) -> omega_toy_consensus::NodeState {
             jsonrpsee::core::params::ArrayParams::new(),
         )
         .await
-        .unwrap()
 }
 
 async fn leader_and_followers() -> (u64, Vec<u64>) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut last_observed = Vec::new();
     loop {
-        let mut leader = None;
+        let mut leaders = Vec::new();
         let mut followers = Vec::new();
+        last_observed.clear();
         for node_id in [1, 2, 3] {
-            let state = state(node_id).await;
-            if matches!(state.role, omega_toy_consensus::NodeRole::Leader) {
-                leader = Some(node_id);
-            } else {
-                followers.push(node_id);
+            match state(node_id).await {
+                Ok(state) => {
+                    last_observed.push(format!("{node_id}:{:?}", state.role));
+                    if matches!(state.role, omega_toy_consensus::NodeRole::Leader) {
+                        leaders.push(node_id);
+                    } else {
+                        followers.push(node_id);
+                    }
+                }
+                Err(error) => {
+                    last_observed.push(format!("{node_id}:error:{error}"));
+                }
             }
         }
-        if let Some(leader) = leader {
-            return (leader, followers);
+        if leaders.len() == 1 && followers.len() == 2 {
+            return (leaders[0], followers);
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!("leader exists within 30s");
+            panic!("single leader and two followers exist within 30s: {last_observed:?}");
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
