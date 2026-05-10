@@ -49,7 +49,7 @@ fn term_monotonic_under_vote_replay_failpoint() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        let _leader = common::leader_url().await;
         let term_before = observed_term(1).await;
 
         fail::cfg(FAILPOINT, "return").unwrap();

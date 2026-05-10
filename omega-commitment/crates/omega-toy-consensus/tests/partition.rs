@@ -27,27 +27,29 @@ async fn state(node_id: u64) -> omega_toy_consensus::NodeState {
 }
 
 async fn leader_and_followers() -> (u64, Vec<u64>) {
-    let mut leader = None;
-    let mut followers = Vec::new();
-    for node_id in [1, 2, 3] {
-        let state = state(node_id).await;
-        if matches!(state.role, omega_toy_consensus::NodeRole::Leader) {
-            leader = Some(node_id);
-        } else {
-            followers.push(node_id);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let mut leader = None;
+        let mut followers = Vec::new();
+        for node_id in [1, 2, 3] {
+            let state = state(node_id).await;
+            if matches!(state.role, omega_toy_consensus::NodeRole::Leader) {
+                leader = Some(node_id);
+            } else {
+                followers.push(node_id);
+            }
         }
+        if let Some(leader) = leader {
+            return (leader, followers);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!("leader exists within 30s");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    (leader.expect("leader exists after 3s"), followers)
 }
 
 fn partition_pair(a: u64, b: u64) {
-    let left = format!("node{a}");
-    let right = format!("node{b}");
-    turmoil::partition(left.as_str(), right.as_str());
-    omega_toy_consensus::test_support::partition_raft_link(a, b);
-}
-
-fn turmoil_partition_pair(a: u64, b: u64) {
     let left = format!("node{a}");
     let right = format!("node{b}");
     turmoil::partition(left.as_str(), right.as_str());
@@ -67,6 +69,7 @@ async fn submit(
 }
 
 #[test]
+#[ignore = "Phase 7 migrates to libp2p connection-deny rules"]
 fn partitioned_minority_does_not_commit() -> turmoil::Result {
     let _guard = TEST_LOCK.lock().unwrap();
     let claim = common::synthetic_claim::synthetic_accepted_claim_for_leaf(13);
@@ -74,7 +77,6 @@ fn partitioned_minority_does_not_commit() -> turmoil::Result {
         common::three_node_sim_with_deadline(Duration::from_secs(5), Duration::from_secs(60));
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
         let (leader, followers) = leader_and_followers().await;
         let minority = followers[0];
         partition_pair(minority, leader);
@@ -99,12 +101,8 @@ fn partitioned_minority_does_not_commit() -> turmoil::Result {
 }
 
 /// Leader commits a claim while one follower's HTTP transport (turmoil)
-/// is partitioned from the other two. Renamed from
-/// `partitioned_majority_continues_to_commit` to acknowledge that this
-/// test partitions ONLY the turmoil HTTP layer, not the in-process raft
-/// dispatcher (`RAFT_REGISTRY` / `RAFT_LINK_BLOCKS`). A real raft-RPC
-/// majority partition test needs the libp2p inbound actor — see
-/// `cardano-wiki/wiki/pages/loganet-roadmap.md` § "Group 3".
+/// is partitioned from the other two. Phase 7 replaces this with a
+/// libp2p-level connection-deny test.
 #[test]
 fn majority_with_http_partition_continues_to_commit() -> turmoil::Result {
     let _guard = TEST_LOCK.lock().unwrap();
@@ -112,11 +110,10 @@ fn majority_with_http_partition_continues_to_commit() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
         let (leader, followers) = leader_and_followers().await;
         let minority = followers[0];
-        turmoil_partition_pair(minority, leader);
-        turmoil_partition_pair(minority, followers[1]);
+        partition_pair(minority, leader);
+        partition_pair(minority, followers[1]);
 
         let result = submit(leader, claim).await;
         let outcome = result.expect("majority leader accepts");

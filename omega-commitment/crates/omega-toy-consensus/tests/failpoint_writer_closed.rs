@@ -55,7 +55,6 @@ fn writer_closed_returns_neg_32004_no_state_advance() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
         let leader_url = common::leader_url().await;
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
             .build(&leader_url)

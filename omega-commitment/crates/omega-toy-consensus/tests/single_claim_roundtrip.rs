@@ -12,27 +12,7 @@ fn single_claim_roundtrip() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        let mut leader_url = None;
-        for node in ["node1", "node2", "node3"] {
-            let url = format!("http://127.0.0.1:800{}", &node[4..]);
-            let client = jsonrpsee::http_client::HttpClientBuilder::default()
-                .build(&url)
-                .unwrap();
-            let state: omega_toy_consensus::NodeState = client
-                .request(
-                    "omega_getState",
-                    jsonrpsee::core::params::ArrayParams::new(),
-                )
-                .await
-                .unwrap();
-            if matches!(state.role, omega_toy_consensus::NodeRole::Leader) {
-                leader_url = Some(url);
-                break;
-            }
-        }
-        let leader_url = leader_url.expect("a leader exists after 3s");
+        let leader_url = common::leader_url().await;
 
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
             .request_timeout(Duration::from_secs(300))

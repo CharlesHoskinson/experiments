@@ -10,7 +10,6 @@ use jsonrpsee::core::client::ClientT;
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 async fn leader_client() -> jsonrpsee::http_client::HttpClient {
-    tokio::time::sleep(Duration::from_secs(3)).await;
     let leader_url = common::leader_url().await;
     jsonrpsee::http_client::HttpClientBuilder::default()
         .build(leader_url)
@@ -116,7 +115,6 @@ fn batch_over_cap_rejected() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
         let leader_url = common::leader_url().await;
         let body = raw_get_state_batch(26);
         let response = raw_post(&leader_url, body).await;

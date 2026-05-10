@@ -75,7 +75,6 @@ fn three_submits_across_elapsed_window_replicate_to_all_nodes() -> turmoil::Resu
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
         let leader_url = common::leader_url().await;
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
             .request_timeout(Duration::from_secs(300))
