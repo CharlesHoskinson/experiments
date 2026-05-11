@@ -30,6 +30,7 @@ omega-mock-ledger = { path = "../omega-mock-ledger" }
 omega-network = { path = "../omega-network" }
 openraft = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
+async-trait = { workspace = true }
 jsonrpsee = { workspace = true }
 humantime-serde = "1"
 schemars = { workspace = true }
@@ -42,10 +43,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
-# Self-dep so the integration tests in `tests/` see the lib built with
-# the `test-support` feature on. Production consumers must not depend
-# on this crate with `features = ["test-support"]`.
-omega-toy-consensus = { path = ".", features = ["test-support"] }
 omega-claim-prover = { path = "../omega-claim-prover", features = ["test-fixtures"] }
 turmoil = { workspace = true }
 fail = { workspace = true }
@@ -61,13 +58,6 @@ default = []
 failpoints = ["fail/failpoints", "omega-mock-ledger/failpoints", "omega-network/failpoints"]
 kani = []
 shuttle-tests = []
-# `test-support` exposes the in-process raft dispatcher controls
-# (`partition_raft_link`, `clear_raft_link_blocks`) for use by the
-# crate's own integration tests. Production callers must NOT enable
-# this feature; doing so would let any caller induce raft link blocks
-# on a running node. The crate's `[dev-dependencies]` activates it
-# automatically via the `omega-toy-consensus` self-dep below.
-test-support = []
 
 [package.metadata.kani]
 unstable = { stubbing = "true" }

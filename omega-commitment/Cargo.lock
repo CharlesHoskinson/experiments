@@ -3088,6 +3088,7 @@ name = "omega-toy-consensus"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "criterion",
  "fail",
@@ -3097,7 +3098,6 @@ dependencies = [
  "omega-claim-tx",
  "omega-mock-ledger",
  "omega-network",
- "omega-toy-consensus",
  "openraft",
  "proptest",
  "schemars 0.8.22",

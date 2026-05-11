@@ -12,9 +12,7 @@ fn submit_to_follower_returns_neg_32000_with_url() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        let mut leader_url = None;
+        let leader_url = common::leader_url().await;
         let mut follower_url = None;
         for node in ["node1", "node2", "node3"] {
             let url = format!("http://127.0.0.1:800{}", &node[4..]);
@@ -29,13 +27,12 @@ fn submit_to_follower_returns_neg_32000_with_url() -> turmoil::Result {
                 )
                 .await
                 .unwrap();
-            if matches!(state.role, omega_toy_consensus::NodeRole::Leader) {
-                leader_url = Some(url);
-            } else if follower_url.is_none() {
+            if !matches!(state.role, omega_toy_consensus::NodeRole::Leader)
+                && follower_url.is_none()
+            {
                 follower_url = Some(url);
             }
         }
-        let leader_url = leader_url.expect("a leader exists after 3s");
         let follower_url = follower_url.expect("a follower exists after 3s");
 
         let follower = jsonrpsee::http_client::HttpClientBuilder::default()

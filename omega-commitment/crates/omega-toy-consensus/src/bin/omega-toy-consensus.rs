@@ -28,12 +28,15 @@ struct RunArgs {
     /// Path to the SQLite WAL directory; created if absent.
     #[arg(long)]
     data_dir: PathBuf,
+    /// Path to the libp2p identity keypair file; created if absent.
+    #[arg(long)]
+    identity_file: Option<PathBuf>,
     /// Libp2p multiaddr the node listens on.
     #[arg(long)]
     listen: String,
-    /// Static peer; format: `<id>,<libp2p_addr>,<rpc_url>`. Repeat once per
-    /// peer.
-    #[arg(long = "peer", value_name = "ID,ADDR,URL")]
+    /// Static peer; format: `<id>,<peer_id>,<libp2p_addr>,<rpc_url>`.
+    /// Repeat once per peer.
+    #[arg(long = "peer", value_name = "ID,PEER_ID,ADDR,URL")]
     peers: Vec<PeerConfig>,
     /// JSON-RPC HTTP bind address.
     #[arg(long)]
@@ -41,9 +44,15 @@ struct RunArgs {
     /// Cluster identifier; must match across peers.
     #[arg(long, default_value = "loganet-dev")]
     cluster_id: String,
-    /// Apply deadline in seconds.
+    /// Apply deadline in seconds. Bounds the JSON-RPC `omega_submitClaim`
+    /// server path (raft commit + apply).
     #[arg(long, default_value = "5")]
     apply_deadline_secs: u64,
+    /// Per-peer libp2p raft RPC timeout in seconds. When unset, defaults
+    /// to `--apply_deadline_secs`. Set explicitly when peer-to-peer RPCs
+    /// need a different bound than the client-write deadline.
+    #[arg(long)]
+    raft_rpc_timeout_secs: Option<u64>,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -68,6 +77,7 @@ async fn run(args: RunArgs) -> anyhow::Result<()> {
     let config = NodeConfig {
         node_id: args.node_id,
         data_dir: args.data_dir,
+        identity_file: args.identity_file,
         libp2p_listen: args.listen,
         peers: args.peers,
         rpc: RpcConfig {
@@ -77,6 +87,7 @@ async fn run(args: RunArgs) -> anyhow::Result<()> {
         },
         cluster_id: args.cluster_id,
         apply_deadline: Duration::from_secs(args.apply_deadline_secs),
+        raft_rpc_timeout: args.raft_rpc_timeout_secs.map(Duration::from_secs),
     };
 
     tracing::info!(node_id = config.node_id, rpc = %config.rpc.bind, "starting");

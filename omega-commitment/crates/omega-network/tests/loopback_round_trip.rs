@@ -147,6 +147,26 @@ async fn two_swarms_round_trip_vote() {
     assert_eq!(vote_response.vote.leader_id().voted_for(), Some(1));
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn swarm_uses_supplied_identity_keypair() {
+    let keypair = libp2p::identity::Keypair::generate_ed25519();
+    let expected = keypair.public().to_peer_id();
+    let listen: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
+    let (_out_tx, out_rx) = mpsc::channel::<OutboundRaftRequest>(8);
+
+    let swarm = RaftSwarm::with_keypair(
+        keypair,
+        listen,
+        vec![],
+        out_rx,
+        Arc::new(StubVoteHandler { node_id: 1 }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(swarm.local_peer_id(), expected);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_swarms_round_trip_append_entries() {
     let listen_1: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();

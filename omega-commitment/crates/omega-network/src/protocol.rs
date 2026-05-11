@@ -15,8 +15,10 @@ pub const RAFT_PROTOCOL: StreamProtocol = StreamProtocol::new("/omega-loganet/ra
 /// Maximum CBOR-encoded request or response size in bytes.
 ///
 /// Snapshot install RPCs carry a chunk of state-machine bytes; openraft 0.9's
-/// default chunk is 1 MiB. Add headroom for envelope overhead.
-pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+/// default chunk is 1 MiB, and synthetic claim fixtures can produce larger
+/// append-entry envelopes. Keep the transport frame cap aligned with the CBOR
+/// envelope cap enforced by [`crate::rpc::decode_cbor`].
+pub const MAX_FRAME_BYTES: usize = crate::rpc::MAX_RAFT_RPC_BYTES;
 
 /// CBOR codec for `RaftRpcRequest` / `RaftRpcResponse` over libp2p.
 #[derive(Clone, Default)]
@@ -91,6 +93,12 @@ async fn read_frame<T: AsyncRead + Unpin + Send>(io: &mut T) -> io::Result<Vec<u
 }
 
 async fn write_frame<T: AsyncWrite + Unpin + Send>(io: &mut T, bytes: &[u8]) -> io::Result<()> {
+    if bytes.len() > MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame {} bytes exceeds max {MAX_FRAME_BYTES}", bytes.len()),
+        ));
+    }
     let len = u32::try_from(bytes.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "frame > u32::MAX"))?;
     io.write_all(&len.to_be_bytes()).await?;
@@ -101,4 +109,34 @@ async fn write_frame<T: AsyncWrite + Unpin + Send>(io: &mut T, bytes: &[u8]) -> 
 
 fn into_io(err: crate::rpc::OmegaNetworkError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::io::Cursor;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn frame_round_trips_payload_above_old_four_mib_cap() {
+        let payload = vec![7u8; 4 * 1024 * 1024 + 1];
+        let mut io = Cursor::new(Vec::new());
+
+        write_frame(&mut io, &payload).await.unwrap();
+        io.set_position(0);
+        let decoded = read_frame(&mut io).await.unwrap();
+
+        assert_eq!(decoded.len(), payload.len());
+        assert_eq!(decoded[0], 7);
+    }
+
+    #[tokio::test]
+    async fn write_frame_rejects_payload_above_envelope_cap() {
+        let payload = vec![0u8; MAX_FRAME_BYTES + 1];
+        let mut io = Cursor::new(Vec::new());
+
+        let err = write_frame(&mut io, &payload).await.unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 }

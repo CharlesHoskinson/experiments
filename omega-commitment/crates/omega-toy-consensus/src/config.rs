@@ -13,6 +13,9 @@ pub struct NodeConfig {
     pub node_id: u64,
     /// Path to the SQLite WAL directory; created if absent.
     pub data_dir: PathBuf,
+    /// Optional libp2p identity keypair file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_file: Option<PathBuf>,
     /// Libp2p multiaddr the node listens on.
     pub libp2p_listen: String,
     /// Static peer list; 2 entries for a 3-node cluster.
@@ -23,8 +26,33 @@ pub struct NodeConfig {
     /// Cluster identifier; must match across all peers.
     pub cluster_id: String,
     /// Apply deadline; default 5s.
+    ///
+    /// Bounds `Raft::client_write` (the JSON-RPC `omega_submitClaim` server
+    /// path) — i.e. how long a client waits for raft to commit + apply.
     #[serde(with = "humantime_serde", default = "default_apply_deadline")]
     pub apply_deadline: Duration,
+
+    /// Per-peer libp2p raft RPC request timeout.
+    ///
+    /// Bounds one peer-to-peer raft RPC (AppendEntries / Vote /
+    /// InstallSnapshot). Distinct from [`apply_deadline`](Self::apply_deadline),
+    /// which bounds the whole client-write call. When `None`, defaults to
+    /// `apply_deadline` for back-compat with v0.1 configs that pre-date this
+    /// field.
+    #[serde(
+        with = "humantime_serde::option",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub raft_rpc_timeout: Option<Duration>,
+}
+
+impl NodeConfig {
+    /// Returns the configured raft RPC timeout, defaulting to
+    /// [`apply_deadline`](Self::apply_deadline) when unset.
+    pub fn effective_raft_rpc_timeout(&self) -> Duration {
+        self.raft_rpc_timeout.unwrap_or(self.apply_deadline)
+    }
 }
 
 fn default_apply_deadline() -> Duration {
@@ -36,6 +64,8 @@ fn default_apply_deadline() -> Duration {
 pub struct PeerConfig {
     /// Stable u64 node identifier of the peer.
     pub node_id: u64,
+    /// libp2p PeerId in base58.
+    pub libp2p_peer_id: String,
     /// Libp2p multiaddr to dial.
     pub libp2p_addr: String,
     /// Public RPC URL used in `-32000 NotLeader` hints.
@@ -45,20 +75,20 @@ pub struct PeerConfig {
 impl std::str::FromStr for PeerConfig {
     type Err = crate::ConsensusError;
 
-    /// Parses `<node_id>,<libp2p_addr>,<rpc_url>`.
+    /// Parses `<node_id>,<peer_id>,<libp2p_addr>,<rpc_url>`.
     ///
     /// Used by the CLI `--peer` flag.
     ///
     /// # Errors
     ///
     /// [`ConsensusError::Config`](crate::ConsensusError::Config) if the input
-    /// has fewer than 3 comma-separated fields or `node_id` does not parse as
+    /// has fewer than 4 comma-separated fields or `node_id` does not parse as
     /// `u64`.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.splitn(3, ',').collect();
-        if parts.len() != 3 {
+        let parts: Vec<&str> = s.splitn(4, ',').collect();
+        if parts.len() != 4 {
             return Err(crate::ConsensusError::Config(format!(
-                "peer must be `<node_id>,<libp2p>,<rpc>`, got `{s}`"
+                "peer must be `<node_id>,<peer_id>,<libp2p>,<rpc>`, got `{s}`"
             )));
         }
         let node_id: u64 = parts[0]
@@ -66,8 +96,9 @@ impl std::str::FromStr for PeerConfig {
             .map_err(|e| crate::ConsensusError::Config(format!("peer node_id: {e}")))?;
         Ok(Self {
             node_id,
-            libp2p_addr: parts[1].to_string(),
-            rpc_url: parts[2].to_string(),
+            libp2p_peer_id: parts[1].to_string(),
+            libp2p_addr: parts[2].to_string(),
+            rpc_url: parts[3].to_string(),
         })
     }
 }
@@ -119,6 +150,7 @@ impl NodeConfig {
         Ok(Self {
             node_id,
             data_dir: std::env::temp_dir().join(format!("omega-toy-consensus-{node_id}")),
+            identity_file: None,
             libp2p_listen: format!("/ip4/127.0.0.1/tcp/{}", 4000 + node_id),
             peers: Vec::new(),
             rpc: RpcConfig {
@@ -128,6 +160,7 @@ impl NodeConfig {
             },
             cluster_id: "loganet-dev".into(),
             apply_deadline: Duration::from_secs(5),
+            raft_rpc_timeout: None,
         })
     }
 }

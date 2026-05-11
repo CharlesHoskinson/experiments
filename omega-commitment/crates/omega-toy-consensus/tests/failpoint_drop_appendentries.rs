@@ -29,15 +29,9 @@ async fn state(node_id: u64) -> omega_toy_consensus::NodeState {
 }
 
 async fn leader() -> u64 {
-    for node_id in [1, 2, 3] {
-        if matches!(
-            state(node_id).await.role,
-            omega_toy_consensus::NodeRole::Leader
-        ) {
-            return node_id;
-        }
-    }
-    panic!("leader exists after 3s");
+    let url = common::leader_url().await;
+    let port = url.rsplit(':').next().unwrap().parse::<u64>().unwrap();
+    port - 8000
 }
 
 async fn submit_to(node_id: u64, claim: ClaimTx) -> omega_toy_consensus::SubmitOutcome {
@@ -78,7 +72,6 @@ fn drop_first_appendentries_eventually_recovers() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
         fail::cfg(FAILPOINT, "1*return->off").unwrap();
 
         let outcome = submit_to(leader().await, claim).await;

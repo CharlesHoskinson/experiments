@@ -2,8 +2,6 @@
 
 mod common;
 
-use std::time::Duration;
-
 use jsonrpsee::core::{client::ClientT, ClientError};
 use omega_claim_tx::{ClaimTx, ProofBytes};
 use proptest::prelude::*;
@@ -44,7 +42,6 @@ fn rpc_input_fuzz_never_panics() -> turmoil::Result {
     let mut sim = common::three_node_sim();
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
         let leader_url = common::leader_url().await;
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
             .build(&leader_url)

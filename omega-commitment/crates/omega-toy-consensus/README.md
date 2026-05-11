@@ -13,13 +13,9 @@ milestone roadmap and Group 2 deferrals.
 - No TLS, no auth, no rate limiting.
 - Two RPC methods: `omega_submitClaim`, `omega_getState`.
 - No membership change; static `--peer` topology.
-- **Raft RPC is in-process.** The `--peer <id>,<libp2p_addr>,<rpc_url>`
-  argument is recorded for leader-hint resolution and openraft's static
-  membership table only; the `libp2p_addr` is **not** wired into raft
-  RPC at v0.1. Three independent `omega-toy-consensus run` processes
-  cannot form a cluster — only `examples/three_node_local`, which
-  spawns three nodes inside one tokio runtime, does. See
-  `cardano-wiki/wiki/pages/loganet-roadmap.md` § "Group 1 transport".
+- Raft RPC uses static libp2p request-response peers. The `--peer`
+  argument is `<id>,<peer_id>,<libp2p_addr>,<rpc_url>`, and each node uses a
+  persisted libp2p identity keypair. Discovery remains out of scope.
 - Windows + 1.95.0 toolchain only.
 
 ## Test pack honesty

@@ -15,7 +15,6 @@ fn partition_pair(a: u64, b: u64) {
     let left = format!("node{a}");
     let right = format!("node{b}");
     turmoil::partition(left.as_str(), right.as_str());
-    omega_toy_consensus::test_support::partition_raft_link(a, b);
 }
 
 #[test]
@@ -25,7 +24,6 @@ fn leader_change_during_submit_yields_disjunction() -> turmoil::Result {
         common::three_node_sim_with_deadline(Duration::from_secs(5), Duration::from_secs(60));
 
     sim.client("client", async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
         let leader_url = common::leader_url().await;
         let leader_id = node_id_from_url(&leader_url);
         let client = jsonrpsee::http_client::HttpClientBuilder::default()
@@ -45,7 +43,6 @@ fn leader_change_during_submit_yields_disjunction() -> turmoil::Result {
             partition_pair(leader_id, peer);
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
-        omega_toy_consensus::test_support::clear_raft_link_blocks();
 
         match outcome {
             None => {}

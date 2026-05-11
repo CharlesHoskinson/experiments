@@ -30,6 +30,15 @@ pub enum ConsensusError {
     #[error("config: {0}")]
     Config(String),
 
+    /// Identity-file read, write, generate, or decode failed.
+    ///
+    /// Distinct from [`Config`](Self::Config) because operators reading
+    /// the error need to distinguish "your config is malformed" from
+    /// "the libp2p identity keypair on disk could not be loaded or
+    /// created" (filesystem permission, disk full, decode error).
+    #[error("identity: {0}")]
+    Identity(String),
+
     /// Shutdown was requested but the runtime task did not join cleanly.
     #[error("shutdown join: {0}")]
     ShutdownJoin(String),

@@ -12,6 +12,23 @@ fn single_node_localhost_basic() {
     assert_eq!(cfg.rpc.max_batch, 25);
     assert_eq!(cfg.rpc.max_request_bytes, 1024 * 1024);
     assert_eq!(cfg.apply_deadline, Duration::from_secs(5));
+    assert_eq!(cfg.raft_rpc_timeout, None);
+}
+
+#[test]
+fn effective_raft_rpc_timeout_defaults_to_apply_deadline() {
+    let mut cfg = NodeConfig::single_node_localhost(1).unwrap();
+    cfg.apply_deadline = Duration::from_secs(7);
+    cfg.raft_rpc_timeout = None;
+    assert_eq!(cfg.effective_raft_rpc_timeout(), Duration::from_secs(7));
+}
+
+#[test]
+fn effective_raft_rpc_timeout_uses_explicit_override() {
+    let mut cfg = NodeConfig::single_node_localhost(1).unwrap();
+    cfg.apply_deadline = Duration::from_secs(7);
+    cfg.raft_rpc_timeout = Some(Duration::from_secs(2));
+    assert_eq!(cfg.effective_raft_rpc_timeout(), Duration::from_secs(2));
 }
 
 #[test]
@@ -22,23 +39,27 @@ fn single_node_localhost_rejects_zero() {
 
 #[test]
 fn peer_config_parse_ok() {
-    let p: PeerConfig = "2,/ip4/127.0.0.1/tcp/4002,http://127.0.0.1:8002"
+    let p: PeerConfig = "2,12D3KooWQe5wFZ6K8eG1A8rD3dDftxZkQPRN1LXwC1D6V7kJd9mp,/ip4/127.0.0.1/tcp/4002,http://127.0.0.1:8002"
         .parse()
         .unwrap();
     assert_eq!(p.node_id, 2);
+    assert_eq!(
+        p.libp2p_peer_id,
+        "12D3KooWQe5wFZ6K8eG1A8rD3dDftxZkQPRN1LXwC1D6V7kJd9mp"
+    );
     assert_eq!(p.libp2p_addr, "/ip4/127.0.0.1/tcp/4002");
     assert_eq!(p.rpc_url, "http://127.0.0.1:8002");
 }
 
 #[test]
 fn peer_config_parse_too_few_fields() {
-    let err: Result<PeerConfig, _> = "2,/ip4/127.0.0.1/tcp/4002".parse();
+    let err: Result<PeerConfig, _> = "2,peer,/ip4/127.0.0.1/tcp/4002".parse();
     assert!(err.is_err());
 }
 
 #[test]
 fn peer_config_parse_bad_node_id() {
-    let err: Result<PeerConfig, _> = "abc,/ip4/127.0.0.1/tcp/4002,http://x".parse();
+    let err: Result<PeerConfig, _> = "abc,peer,/ip4/127.0.0.1/tcp/4002,http://x".parse();
     assert!(err.is_err());
 }
 
@@ -47,9 +68,11 @@ fn node_config_serde_round_trip_toml() {
     let cfg = NodeConfig {
         node_id: 7,
         data_dir: PathBuf::from("/tmp/x"),
+        identity_file: None,
         libp2p_listen: "/ip4/127.0.0.1/tcp/4007".into(),
         peers: vec![PeerConfig {
             node_id: 2,
+            libp2p_peer_id: "12D3KooWQe5wFZ6K8eG1A8rD3dDftxZkQPRN1LXwC1D6V7kJd9mp".into(),
             libp2p_addr: "/ip4/127.0.0.1/tcp/4002".into(),
             rpc_url: "http://127.0.0.1:8002".into(),
         }],
@@ -60,10 +83,12 @@ fn node_config_serde_round_trip_toml() {
         },
         cluster_id: "loganet-dev".into(),
         apply_deadline: Duration::from_secs(5),
+        raft_rpc_timeout: Some(Duration::from_secs(2)),
     };
     let toml = toml::to_string(&cfg).unwrap();
     let back: NodeConfig = toml::from_str(&toml).unwrap();
     assert_eq!(back.node_id, 7);
     assert_eq!(back.peers.len(), 1);
     assert_eq!(back.apply_deadline, Duration::from_secs(5));
+    assert_eq!(back.raft_rpc_timeout, Some(Duration::from_secs(2)));
 }
