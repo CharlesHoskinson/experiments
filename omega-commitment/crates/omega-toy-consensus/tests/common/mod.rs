@@ -106,6 +106,10 @@ pub async fn leader_url() -> String {
         for node_id in [1, 2, 3] {
             let url = format!("http://127.0.0.1:800{node_id}");
             let client = jsonrpsee::http_client::HttpClientBuilder::default()
+                // Bound the per-node probe so a stuck server cannot freeze
+                // the wider deadline loop. Default jsonrpsee HTTP client has
+                // no timeout — under CI load this can wedge for hours.
+                .request_timeout(Duration::from_secs(5))
                 .build(&url)
                 .unwrap();
             match client

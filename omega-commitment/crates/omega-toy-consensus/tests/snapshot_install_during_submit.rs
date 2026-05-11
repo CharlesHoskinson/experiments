@@ -25,9 +25,15 @@ async fn submit(
     client.request("omega_submitClaim", params).await.unwrap()
 }
 
-async fn state(node_id: u64) -> omega_toy_consensus::NodeState {
+async fn state(
+    node_id: u64,
+) -> Result<omega_toy_consensus::NodeState, jsonrpsee::core::ClientError> {
     let url = format!("http://127.0.0.1:800{node_id}");
     let client = jsonrpsee::http_client::HttpClientBuilder::default()
+        // Bound each individual RPC so a stuck server cannot wedge the
+        // polling loop indefinitely. A 5s ceiling is generous against
+        // openraft's 250ms heartbeat / 1.5-3s election cycle.
+        .request_timeout(Duration::from_secs(5))
         .build(url)
         .unwrap();
     client
@@ -36,19 +42,25 @@ async fn state(node_id: u64) -> omega_toy_consensus::NodeState {
             jsonrpsee::core::params::ArrayParams::new(),
         )
         .await
-        .unwrap()
 }
 
 async fn wait_counts_match(expected_nullifiers: u64, expected_utxos: u64) {
-    let mut observed = Vec::new();
+    let mut observed: Vec<(u64, String)> = Vec::new();
     for _ in 0..120 {
         observed.clear();
         let mut all_match = true;
         for node_id in [1, 2, 3] {
-            let state = state(node_id).await;
-            all_match &= state.nullifier_count == expected_nullifiers
-                && state.starstream_utxo_count == expected_utxos;
-            observed.push((node_id, state));
+            match state(node_id).await {
+                Ok(state) => {
+                    all_match &= state.nullifier_count == expected_nullifiers
+                        && state.starstream_utxo_count == expected_utxos;
+                    observed.push((node_id, format!("{state:?}")));
+                }
+                Err(error) => {
+                    all_match = false;
+                    observed.push((node_id, format!("error: {error}")));
+                }
+            }
         }
         if all_match {
             return;

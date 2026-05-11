@@ -15,6 +15,7 @@ fn node_url(node_id: u64) -> String {
 
 async fn state(node_id: u64) -> Result<omega_toy_consensus::NodeState, ClientError> {
     let client = jsonrpsee::http_client::HttpClientBuilder::default()
+        .request_timeout(Duration::from_secs(5))
         .build(node_url(node_id))
         .unwrap();
     client

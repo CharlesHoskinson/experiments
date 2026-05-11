@@ -3,6 +3,11 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Prevent a hung integration test (e.g., a jsonrpsee client without
+    # `request_timeout` polling a stuck server) from burning hours of
+    # runtime. 30 minutes is well above the 12-minute happy-path runtime
+    # observed in PR #8 / #9 yet small enough to fail loud.
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: omega-commitment
